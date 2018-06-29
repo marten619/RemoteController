@@ -1,0 +1,380 @@
+C51 COMPILER V9.56.0.0   A9112F4_FUNCTION                                                  03/10/2018 13:56:19 PAGE 1   
+
+
+C51 COMPILER V9.56.0.0, COMPILATION OF MODULE A9112F4_FUNCTION
+OBJECT MODULE PLACED IN .\A9112F4_Function.obj
+COMPILER INVOKED BY: C:\Keil_v5\C51\BIN\C51.EXE ..\RF\A9112F4_Function.c LARGE OPTIMIZE(0,SPEED) BROWSE DEBUG OBJECTEXTE
+                    -ND PRINT(.\A9112F4_Function.lst) TABS(3) OBJECT(.\A9112F4_Function.obj)
+
+line level    source
+
+   1          /*********************************************************************
+   2          ** Device:     A9112-F4
+   3          ** File:    A9112_Function.c
+   4          ** Target:     A9112-F4
+   5          ** Tools:      ICE
+   6          ** Updated: 2017-02-13
+   7          ** Description:
+   8          ** This file is the RF  function.
+   9          **
+  10          ** Copyright (C) 2016 AMICCOM Corp.
+  11          **
+  12          *********************************************************************/
+  13          #define  _A9112F4_Function_C_
+  14          
+  15          #include "..\include\System_config.h"
+  16          
+  17          
+  18          /************************************************************************
+  19          ** A9112_WriteReg
+  20          ************************************************************************/
+  21          void A9112_WriteReg(Uint16 addr, Uint8 dataByte)
+  22          {
+  23   1         XBYTE[addr] = dataByte;
+  24   1         _nop_(); _nop_();
+  25   1         _nop_(); _nop_();
+  26   1      }
+  27          
+  28          /************************************************************************
+  29          ** A9112_ReadReg
+  30          ************************************************************************/
+  31          Uint8 A9112_ReadReg(Uint16 addr)
+  32          {
+  33   1         return (XBYTE[addr]);
+  34   1      }
+  35          
+  36          /************************************************************************
+  37          ** Reset Command
+  38          ************************************************************************/
+  39          void ResetCMD(Uint8  cmd)
+  40          {
+  41   1         A9112_WriteReg(RSTCTL_REG, cmd);
+  42   1         Delay10us(1);
+  43   1      }
+  44          
+  45          /************************************************************************
+  46          ** Strobe Command
+  47          ************************************************************************/
+  48          void StrobeCMD(Uint8 cmd)
+  49          {
+  50   1         A9112_WriteReg(MODEC1_REG, cmd);
+  51   1         Delay10us(1);
+  52   1      }
+  53          
+  54          /************************************************************************
+C51 COMPILER V9.56.0.0   A9112F4_FUNCTION                                                  03/10/2018 13:56:19 PAGE 2   
+
+  55          ** InitRF
+  56          ************************************************************************/
+  57          void InitRF(void)
+  58          {
+  59   1         Delay100us(5);    //delay  500us for regulator  stabilized
+  60   1         ResetCMD(RF_RST); //reset  A9112 chip
+  61   1         A9112_Config();      //config A9112 chip
+  62   1         Delay100us(5);    //delay  500us for crystal(49US type) stabilized
+  63   1         A9112_WriteID();  //write  ID code
+  64   1         A9112_Cal();      //IF and VCO calibration
+  65   1         
+  66   1         if(Flag_MASTER)   
+  67   1            A9112_WriteReg(RX_REG, A9112Config[RX_REG -  CONFIG]  & 0xFE); //Master: ULS=0
+  68   1         else  
+  69   1            A9112_WriteReg(RX_REG, A9112Config[RX_REG -  CONFIG]  | 0x01); //Slave: ULS=1
+  70   1      
+  71   1      }
+  72          
+  73          /************************************************************************
+  74          ** A9112_Config
+  75          ************************************************************************/
+  76          void A9112_Config(void)
+  77          {
+  78   1         Uint16 i;
+  79   1         
+  80   1            #ifdef RF_DR10Kbps_50KIFBW         /*Xtal=12.8M*/
+                          A9112_Load_Config(CONFIG_DR10Kbps_50KIFBW);  
+                  #endif  
+  83   1         
+  84   1            #ifdef RF_DR100Kbps_100KIFBW       /*Xtal=12.8M*/
+  85   1                  A9112_Load_Config(CONFIG_DR100Kbps_100KIFBW);
+  86   1          #endif     
+  87   1      
+  88   1            #ifdef RF_DR150Kbps_150KIFBW       /*Xtal=19.2M*/
+                          A9112_Load_Config(CONFIG_DR150Kbps_150KIFBW);
+                  #endif     
+  91   1      
+  92   1            #ifdef RF_DR250Kbps_250KIFBW       /*Xtal=16M*/
+                          A9112_Load_Config(CONFIG_DR250Kbps_250KIFBW);   
+                  #endif  
+  95   1         
+  96   1         for(i=0; i<sizeof(A9112Config);  i++)
+  97   1            A9112_WriteReg(i + CONFIG, A9112Config[i]);
+  98   1      }
+  99          
+ 100          /************************************************************************
+ 101          ** A9112_WriteID
+ 102          ************************************************************************/
+ 103          void A9112_WriteID(void)
+ 104          {
+ 105   1         Uint8 i;
+ 106   1         Uint8 d[8];
+ 107   1      
+ 108   1         //Write  ID
+ 109   1         for(i=0; i<8; i++)
+ 110   1            A9112_WriteReg((ID0_REG - i), ID_Tab[i]);
+ 111   1      
+ 112   1         //Read ID
+ 113   1         for(i=0; i<8; i++)
+ 114   1            d[i] = A9112_ReadReg(ID0_REG - i);
+ 115   1      
+ 116   1         //for check
+C51 COMPILER V9.56.0.0   A9112F4_FUNCTION                                                  03/10/2018 13:56:19 PAGE 3   
+
+ 117   1         for(i=0; i<8; i++)
+ 118   1         {
+ 119   2            if(d[i]  != ID_Tab[i])
+ 120   2            {
+ 121   3               Err_State();
+ 122   3            }
+ 123   2         }
+ 124   1      }
+ 125          
+ 126          /************************************************************************
+ 127          ** A9112_Cal
+ 128          ************************************************************************/
+ 129          void A9112_Cal(void)
+ 130          {
+ 131   1         Uint8 fb, fcd, fbcf; //IF Filter
+ 132   1         Uint8 vcb, vccf;     //VCO Current
+ 133   1         Uint8 vb, vbcf;         //VCO Band
+ 134   1         Uint8 tmp,i;
+ 135   1      
+ 136   1         
+ 137   1         StrobeCMD(CMD_STBY);
+ 138   1      
+ 139   1         //IF calibration procedure @STB  state
+ 140   1         A9112_WriteReg(IFC1_REG, A9112Config[IFC1_REG - CONFIG]);         //IF Auto Cal.
+ 141   1         A9112_WriteReg(CACL_REG, A9112Config[CACL_REG - CONFIG]  | 0x0A); //IF & VCC Calibration
+ 142   1         do{
+ 143   2            tmp   = A9112_ReadReg(CACL_REG);
+ 144   2         }while(tmp & 0x0A);
+ 145   1      
+ 146   1         //for check(IF Filter)
+ 147   1         tmp      = A9112_ReadReg(IFC1_REG);
+ 148   1         fb    = tmp &  0x0F;
+ 149   1         fbcf  = (tmp >> 4) & 0x01;
+ 150   1         tmp      = A9112_ReadReg(IFC2_REG);
+ 151   1         fcd      = tmp &  0x1F;
+ 152   1         if(fbcf)
+ 153   1         {  
+ 154   2            Err_State();
+ 155   2         }
+ 156   1         
+ 157   1         //manual FB+1 for IFBW=50K or 100KHz
+ 158   1         tmp   = (A9112Config[RX_REG - CONFIG]  & 0x30)>>4;
+ 159   1         
+ 160   1         if((0 == tmp) || (1  == tmp))
+ 161   1         A9112_WriteReg(IFC1_REG, (fb + 1) | 0x10);   
+ 162   1         
+ 163   1         //for check(VCO   Current)
+ 164   1         tmp      = A9112_ReadReg(VCOCC_REG);
+ 165   1         vcb      = tmp &  0x0F;
+ 166   1         vccf  = (tmp >> 4) & 0x01;
+ 167   1         if(vccf)
+ 168   1         {
+ 169   2            Err_State();
+ 170   2         }
+ 171   1         
+ 172   1         //RSSI Calibration procedure @STB state
+ 173   1         A9112_WriteReg(ADCC_REG, 0xCC);     //set ADC average=64
+ 174   1         A9112_WriteReg(CACL_REG, A9112Config[CACL_REG - CONFIG]  | 0x01);    //RSSI Calibration
+ 175   1         do{
+ 176   2            tmp   = A9112_ReadReg(CACL_REG);
+ 177   2         }while(tmp & 0x01);
+ 178   1         A9112_WriteReg(ADCC_REG, A9112Config[ADCC_REG - CONFIG]);
+C51 COMPILER V9.56.0.0   A9112F4_FUNCTION                                                  03/10/2018 13:56:19 PAGE 4   
+
+ 179   1         
+ 180   1            i=0;
+ 181   1            
+ 182   1                  
+ 183   1            //VCO calibration procedure   @STB state
+ 184   1            A9112_WriteReg(PLL3_REG, MasterFreq_Tab[3*i]);
+ 185   1            A9112_WriteReg(PLL4_REG, MasterFreq_Tab[3*i+1]);
+ 186   1            A9112_WriteReg(PLL5_REG, MasterFreq_Tab[3*i+2]);
+ 187   1            
+ 188   1            A9112_WriteReg(CACL_REG, A9112Config[CACL_REG - CONFIG]  | 0x04);    //VCO Calibration
+ 189   1            do{
+ 190   2               tmp   = A9112_ReadReg(CACL_REG);
+ 191   2            }while(tmp & 0x04);
+ 192   1                  
+ 193   1            //for check(VCO   Band)
+ 194   1            tmp      = A9112_ReadReg(VCOBC1_REG);
+ 195   1            vb    = tmp &  0x07;
+ 196   1            vbcf  = (tmp >> 3) & 0x01;
+ 197   1            if(vbcf)
+ 198   1            {  
+ 199   2               Err_State();
+ 200   2            }
+ 201   1         
+ 202   1         
+ 203   1      }
+ 204          
+ 205          /************************************************************************
+ 206          ** A9112_PM
+ 207          ************************************************************************/
+ 208          void A9112_PM(Uint8  _sel_)
+ 209          {
+ 210   1         
+ 211   1      // P0OE  &= 0x00;
+ 212   1      // P0PUN &= 0x00;
+ 213   1      // P0    = 0xFF;
+ 214   1      // P0WUN |= 0xFF;
+ 215   1      // 
+ 216   1      // P1OE  &= 0x00;
+ 217   1      // P1PUN &= 0x00;
+ 218   1      // P1WUN |= 0xFF;
+ 219   1      // 
+ 220   1      // P3OE  &= 0x00;
+ 221   1      // P3PUN &= 0x00;
+ 222   1      // P3WUN =  0xFB;
+ 223   1            //all pin as input and pull high
+ 224   1         IOSEL   = 0x00;
+ 225   1      
+ 226   1         P0OE  = 0x00;
+ 227   1         P0PUN = 0xFF;
+ 228   1         P0    = 0x00;
+ 229   1         P0WUN = 0xFF;
+ 230   1      
+ 231   1         P1OE  = 0x00;     // Output: High enable, Bit 1,2,3,6,7 enable
+ 232   1         P1PUN = 0xFF;     // Pullup: Low enable, Bit 1,2,3,6,7 disable
+ 233   1         P1    = 0x00;     // Output Data
+ 234   1         P1WUN = 0xFF;
+ 235   1      
+ 236   1         P3OE  = 0x00;
+ 237   1         P3PUN = 0x00;
+ 238   1         P3    = 0xC3;
+ 239   1         P3WUN = 0xC3;     // Low enable: P3_2 ~ P3_5 are enabled 
+ 240   1         
+C51 COMPILER V9.56.0.0   A9112F4_FUNCTION                                                  03/10/2018 13:56:19 PAGE 5   
+
+ 241   1         A9112_WriteReg(EXT5_REG, 0x08);  
+ 242   1         
+ 243   1         switch(  _sel_ )
+ 244   1         {
+ 245   2            case PM1:
+ 246   2               A9112_WriteReg(PWRCTL_REG, 0xD0);         
+ 247   2            break;
+ 248   2            
+ 249   2            case PM2:
+ 250   2               A9112_WriteReg(PWRCTL_REG, 0xB0);         
+ 251   2            break;
+ 252   2            
+ 253   2            case PM3:
+ 254   2               A9112_WriteReg(PWRCTL_REG, 0xA8);
+ 255   2            break;   
+ 256   2            
+ 257   2         }
+ 258   1         
+ 259   1         StrobeCMD(CMD_SLEEP);
+ 260   1         PCONE =  0x09;
+ 261   1         PCON = PCON | 0x02;
+ 262   1         _nop_(); _nop_();
+ 263   1         while(PCON & 0x02);  
+ 264   1         
+ 265   1      }
+ 266          
+ 267          /************************************************************************
+ 268          ** FreqSet
+ 269          ************************************************************************/
+ 270          void FreqSet(Uint8 ch)
+ 271          {
+ 272   1         if(Flag_MASTER)
+ 273   1         {
+ 274   2            A9112_WriteReg(PLL3_REG, MasterFreq_Tab[3*ch]);
+ 275   2            A9112_WriteReg(PLL4_REG, MasterFreq_Tab[3*ch+1]);
+ 276   2            A9112_WriteReg(PLL5_REG, MasterFreq_Tab[3*ch+2]);
+ 277   2         }
+ 278   1         else
+ 279   1         {
+ 280   2            A9112_WriteReg(PLL3_REG, SlaveFreq_Tab[3*ch]);
+ 281   2            A9112_WriteReg(PLL4_REG, SlaveFreq_Tab[3*ch+1]);
+ 282   2            A9112_WriteReg(PLL5_REG, SlaveFreq_Tab[3*ch+2]);
+ 283   2         }
+ 284   1      }
+ 285          
+ 286          /************************************************************************
+ 287          ** RC Oscillator Calibration
+ 288          ************************************************************************/
+ 289          void RCOSC_Cal(void)
+ 290          {
+ 291   1         Uint16 tmp;
+ 292   1         
+ 293   1      #if   defined  (Xtal_12p8MHz)
+ 294   1         Uint16 TGNUM=781; //for crystal=12.8MHz
+ 295   1      #elif defined (Xtal_16MHz)
+                 Uint16 TGNUM=977; //for crystal=16MHz
+              #elif defined (Xtal_19p2MHz)
+                 Uint16 TGNUM=1172;   //for crystal=19.2MHz
+              #endif
+ 300   1      
+ 301   1            
+ 302   1         StrobeCMD(CMD_STBY);
+C51 COMPILER V9.56.0.0   A9112F4_FUNCTION                                                  03/10/2018 13:56:19 PAGE 6   
+
+ 303   1      
+ 304   1         //A9112_WriteReg(CKO_REG, 0x50); //ROSC=32.768KHz
+ 305   1         //A9112_WriteReg(CKO_REG, 0x40); //WCK=4.096KHz
+ 306   1      
+ 307   1         A9112_WriteReg(RCOSC7_REG, (TGNUM>>8));   //TGNUM
+ 308   1         A9112_WriteReg(RCOSC8_REG, TGNUM);     //TGNUM
+ 309   1         
+ 310   1         A9112_WriteReg(RCOSC3_REG, A9112Config[RCOSC3_REG -   CONFIG]  | 0x04); //enable RC OSC
+ 311   1      
+ 312   1         while(1)
+ 313   1         {
+ 314   2            A9112_WriteReg(RCOSC4_REG, A9112Config[RCOSC4_REG -   CONFIG]  | 0x01); //set ENCAL=1 to start RC OSC CAL
+ 315   2            do{
+ 316   3               tmp   = A9112_ReadReg(RCOSC4_REG);
+ 317   3            }while(tmp & 0x01);
+ 318   2      
+ 319   2            tmp   = (A9112_ReadReg(RCOSC4_REG) & 0xF0);  //read NUMLH[11:8]
+ 320   2            tmp   <<=   4;
+ 321   2            tmp   = tmp +  A9112_ReadReg(RCOSC5_REG);    //read NUMLH[7:0]
+ 322   2            
+ 323   2            if((tmp  > (TGNUM-10)) && (tmp < (TGNUM+10)))   //NUMLH[11:0]=TGNUM+-10
+ 324   2            {
+ 325   3               break;
+ 326   3            }
+ 327   2         }
+ 328   1      }
+ 329          
+ 330          /************************************************************************
+ 331          ** RFISR
+ 332          ************************************************************************/
+ 333          void RFISR(void) interrupt 10
+ 334          {
+ 335   1         EIF   |= 0x08; //clear  flag
+ 336   1         RF_FLAG  = 0;
+ 337   1         
+ 338   1         //A9112_WriteReg(TMRCTL_REG, 0xE1); //TMRCKS=128Hz
+ 339   1         //A9112_WriteReg(TMRCTL_REG, 0xE3); //TMRCKS=64Hz
+ 340   1         //A9112_WriteReg(TMRCTL_REG, 0xE5); //TMRCKS=32Hz
+ 341   1         //A9112_WriteReg(TMRCTL_REG, 0xE7); //TMRCKS=16Hz
+ 342   1         //A9112_WriteReg(TMRCTL_REG, 0xE9); //TMRCKS=8Hz
+ 343   1         //A9112_WriteReg(TMRCTL_REG, 0xEB); //TMRCKS=4Hz
+ 344   1         //A9112_WriteReg(TMRCTL_REG, 0xED); //TMRCKS=2Hz
+ 345   1         //A9112_WriteReg(TMRCTL_REG, 0xEF); //TMRCKS=1Hz
+ 346   1      }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =   1502    ----
+   CONSTANT SIZE    =     26    ----
+   XDATA SIZE       =     36    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =      3    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

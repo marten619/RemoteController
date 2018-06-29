@@ -1,0 +1,396 @@
+C51 COMPILER V9.56.0.0   SHA_I2C                                                           03/10/2018 13:56:19 PAGE 1   
+
+
+C51 COMPILER V9.56.0.0, COMPILATION OF MODULE SHA_I2C
+OBJECT MODULE PLACED IN .\SHA_I2C.obj
+COMPILER INVOKED BY: C:\Keil_v5\C51\BIN\C51.EXE ..\source\SHA_I2C.c LARGE OPTIMIZE(0,SPEED) BROWSE DEBUG OBJECTEXTEND PR
+                    -INT(.\SHA_I2C.lst) TABS(3) OBJECT(.\SHA_I2C.obj)
+
+line level    source
+
+   1          #ifndef _SHA_I2C_C_
+   2          #define _SHA_I2C_C_
+   3          
+   4          #include "..\include\System_config.h"
+   5          
+   6          #define I2C_ID_C8_SHA204         0x64
+   7          #define SHA_WORD_ADDRESS_RESET   0
+   8          #define SHA_WORD_ADDRESS_SLEEP   1
+   9          #define SHA_WORD_ADDRESS_IDLE    2
+  10          #define SHA_WORD_ADDRESS_NORMAL  3
+  11          
+  12          
+  13          // *************************
+  14          // Extern Function
+  15          // *************************
+  16          extern   void delay(void);
+  17          extern   void I2C_MasterInit(void);
+  18          extern   Uint8 I2CWriteData(Uint8 id, Uint8 *buf, Uint8 length);
+  19          extern   Uint8 I2CReadData(Uint8 id, Uint8* buf, Uint8 length);
+  20          
+  21          extern   UrPrint(Uint8*, Uint8);
+  22          
+  23          // *************************
+  24          // Extern Parameters
+  25          // *************************
+  26          extern   Uint8   xdata   shabuf[64];
+  27          extern   Uint8   xdata   DEV_id[16];
+  28          extern   Uint8   xdata   DEV_sn[16];      // Device unique SN
+  29          extern   Uint8   xdata   RND_a[32];
+  30          extern   Uint8   xdata   RND_b[32];       // get from Host
+  31          extern   Uint8   xdata   ANS_a[32];
+  32          extern   Uint8   xdata   MAC_my[32];      // User's MAC = sha(Slot 0, S/N)
+  33          extern   Uint8   xdata   TX_cmd;
+  34          extern   Uint8   xdata   TxBuff[64];
+  35          extern   Uint8   xdata   RxBuff[64];
+  36          extern   Uint8   xdata   TxLen;
+  37          extern   Uint8   xdata   RxLen;
+  38          
+  39          
+  40          // *************************
+  41          // Local Function Decoration 
+  42          // *************************
+  43          void     SHA_I2C_Init(void);
+  44          void     ShaCmdSendRecv(Uint8 *sbuf, Uint8 sLen, Uint8 *rbuf, Uint8 rLen,Uint8 delay);
+  45          Uint8    ShaReadSn (Uint8 *rbuf);
+  46          Uint8    ShaReadRnd (Uint8 *rbuf);
+  47          Uint8    I2CSha204Wakeup();
+  48          Uint8    I2CSha204Sleep();
+  49          void     step0_mixSnIntoRnd_b();
+  50          Uint8    step1_getMACfromSlot0(Uint8 *, Uint8 ,Uint8 *, Uint8 );  
+  51          Uint8    step2_writeToSlot7 (Uint8 *buf, Uint8 pLen);  
+  52          Uint8    step3_getMACfromSlot7(Uint8 *buf, Uint8 pLen); 
+  53          void     shaCalCrc(Uint8 *, Uint8 length, Uint8 *crc);
+  54          
+C51 COMPILER V9.56.0.0   SHA_I2C                                                           03/10/2018 13:56:19 PAGE 2   
+
+  55          
+  56          /*********************************************************************
+  57          * SHA_I2C_Init
+  58          *********************************************************************/
+  59          void SHA_I2C_Init(void)
+  60          {
+  61   1         I2C_MasterInit();   
+  62   1      }
+  63          
+  64          
+  65          /*********************************************************************
+  66          * SHA_Read
+  67          *********************************************************************/
+  68          void ShaCmdSendRecv(Uint8 *sbuf, Uint8 sLen, Uint8 *rbuf, Uint8 rLen, Uint8 dly) {
+  69   1         if(sbuf==NULL | sLen==0)
+  70   1            return;
+  71   1        
+  72   1         I2CWriteData(I2C_ID_C8_SHA204, sbuf,sLen);
+  73   1         
+  74   1         memset(rbuf, 0, rLen);
+  75   1         Delay10ms ( dly );
+  76   1         
+  77   1         I2CReadData(I2C_ID_C8_SHA204, rbuf, rLen);
+  78   1         
+  79   1         // I2CSha204Sleep();
+  80   1      }
+  81          
+  82          /*********************************************************************
+  83          * REV_Read
+  84          // CMD1: Read device REV
+  85          // I/P: 07 30 00 00 00 03 5D           // expected return size
+  86          // O/P: 07 x x x x
+  87          *********************************************************************/
+  88          #define SHA_CMD_REV_SIZE    0x7        // expected return size
+  89          #define SHA_CMD_REV_DELAY   0X1   //4ms
+  90          Uint8 ShaReadRev (Uint8 *rbuf) {
+  91   1         
+  92   1         Uint8    xdata sbuf[] = { 3, 7, 0x30, 0, 0, 0, 3, 0x5D};   
+  93   1         ShaCmdSendRecv(sbuf, sizeof(sbuf), \
+  94   1            rbuf, SHA_CMD_REV_SIZE, SHA_CMD_REV_DELAY );    // Response SN length is 
+  95   1      
+  96   1         if(rbuf[0]==SHA_CMD_REV_SIZE) {
+  97   2            return 1;
+  98   2         }
+  99   1         return 0;
+ 100   1      }
+ 101          
+ 102          /*********************************************************************
+ 103          * SN_Read
+ 104          // CMD2: Read device S/N            // expected return size
+ 105          // I/P: 07 02 80 00 00 09 AD
+ 106          // O/P: 23 x x x x
+ 107          *********************************************************************/
+ 108          #define SHA_CMD_SN_SIZE    0x23
+ 109          #define SHA_CMD_SN_DELAY   0X1   //4ms
+ 110          Uint8 ShaReadSn (Uint8 *rbuf) {
+ 111   1         
+ 112   1         Uint8    xdata sbuf[] = { 3, 7, 2, 0x80, 0, 0, 9, 0xAD};
+ 113   1         
+ 114   1         ShaCmdSendRecv(sbuf, sizeof(sbuf), rbuf, \
+ 115   1            SHA_CMD_SN_SIZE, SHA_CMD_SN_DELAY);    // Response SN length is 
+ 116   1      
+C51 COMPILER V9.56.0.0   SHA_I2C                                                           03/10/2018 13:56:19 PAGE 3   
+
+ 117   1         if(rbuf[0]==SHA_CMD_SN_SIZE) {
+ 118   2            return 1;
+ 119   2         }
+ 120   1         return 0;
+ 121   1      }
+ 122          
+ 123          /*********************************************************************
+ 124          * SN_Read
+ 125          // CMD2: Read device S/N
+ 126          // I/P: 07 1B 00 00 00 24 CD 
+ 127          // O/P: 23 x x x x
+ 128          *********************************************************************/
+ 129          #define SHA_CMD_RND_SIZE   0x23        // expected return size
+ 130          #define SHA_CMD_RND_DELAY  6          //50ms
+ 131          Uint8 ShaReadRnd (Uint8 *rbuf) {   
+ 132   1         Uint8    xdata sbuf[] = { 3, 7, 0x1B, 0, 0, 0, 0x24, 0xCD};
+ 133   1         
+ 134   1         ShaCmdSendRecv(sbuf, sizeof(sbuf), rbuf, \
+ 135   1            SHA_CMD_RND_SIZE, SHA_CMD_RND_DELAY);    // Response SN length is 
+ 136   1        
+ 137   1         if(rbuf[0]==SHA_CMD_RND_SIZE) {
+ 138   2            return 1;
+ 139   2         }
+ 140   1         return 0;
+ 141   1      }
+ 142          
+ 143          void step0_mixSnIntoRnd_b() {
+ 144   1         Uint8 i;
+ 145   1         for(i=0; i<sizeof(RND_b); i++) {
+ 146   2            RND_b[i] = RND_b[i] ^ DEV_sn[ i & 0x7];      
+ 147   2         }
+ 148   1      }
+ 149          
+ 150          /*********************************************************************
+ 151          * SHA_Action1
+ 152          // Result1 = SHA(Slot 0, RND_b)
+ 153          // 1. MAC Command Sent: MAC (Slot 0 + SN)
+ 154          // 27 08 00 00 00 01 23 5C C3 00 04 05 00 B4 89 C8 5E EE 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 0
+             -0 00 00 5C A8 
+ 155          // O/P Result1 = 32bytes
+ 156          *********************************************************************/
+ 157          #define SHA_CMD_MAC_SLOT0_IN_SIZE      0x28     // Full packet will be: Word_address(03) + Count + (Cmd_Da
+             -ta) + CRC1 + CRC2 = Count + 1
+ 158          #define SHA_CMD_MAC_SLOT0_OUT_SIZE     0x23     // expected return size
+ 159          #define SHA_CMD_MAC_DELAY              4        // Max. 35ms
+ 160          Uint8 step1_getMACfromSlot0(Uint8 *obuf, Uint8 oLen,Uint8 *ibuf, Uint8 iLen) {   
+ 161   1         Uint8    xdata header[] = { 0x3, 0x27, 0x8, 0, 0, 0};
+ 162   1         // Copy Header
+ 163   1         memset(TxBuff, 0, sizeof(TxBuff));
+ 164   1         memcpy(TxBuff, header, sizeof(header));
+ 165   1         // 2. put S/N
+ 166   1         memcpy(&TxBuff[sizeof(header)], ibuf, iLen); 
+ 167   1         // 3. Gen CRC (skip) , FAKE CRC  
+ 168   1         shaCalCrc(&TxBuff[1], SHA_CMD_MAC_SLOT0_IN_SIZE-3, &TxBuff[SHA_CMD_MAC_SLOT0_IN_SIZE-2]);
+ 169   1         
+ 170   1         ShaCmdSendRecv(TxBuff, SHA_CMD_MAC_SLOT0_IN_SIZE, RxBuff, \
+ 171   1            SHA_CMD_MAC_SLOT0_OUT_SIZE, SHA_CMD_MAC_DELAY);    // Response SN length is 
+ 172   1        
+ 173   1         
+ 174   1         if(RxBuff[0]==SHA_CMD_MAC_SLOT0_OUT_SIZE) {
+ 175   2            memcpy(obuf, &RxBuff[1], oLen);     
+ 176   2            return 1;
+C51 COMPILER V9.56.0.0   SHA_I2C                                                           03/10/2018 13:56:19 PAGE 4   
+
+ 177   2         }
+ 178   1         return 0;
+ 179   1      }
+ 180          
+ 181          ///*********************************************************************
+ 182          //* SHA_Action1
+ 183          //// Result1 = SHA(Slot 0, S/N)
+ 184          //// 1. MAC Command Sent: MAC (Slot 0 + SN)
+ 185          //// 27 08 00 00 00 01 23 5C C3 00 04 05 00 B4 89 C8 5E EE 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+             - 00 00 00 5C A8 
+ 186          //// O/P Result1 = 32bytes
+ 187          //*********************************************************************/
+ 188          //#define SHA_CMD_MAC_SLOT0_IN_SIZE      0x28     // Full packet will be: Word_address(03) + Count + (Cmd_
+             -Data) + CRC1 + CRC2 = Count + 1
+ 189          //#define SHA_CMD_MAC_SLOT0_OUT_SIZE     0x23     // expected return size
+ 190          //#define SHA_CMD_MAC_DELAY              4        // Max. 35ms
+ 191          //Uint8 step1_getMACfromSlot0(Uint8 *buf, Uint8 pLen) {   
+ 192          //   Uint8    xdata header[] = { 0x3, 0x27, 0x8, 0, 0, 0};
+ 193          //   // Copy Header
+ 194          //   memset(TxBuff, 0, sizeof(TxBuff));
+ 195          //   memcpy(TxBuff, header, sizeof(header));
+ 196          //   // 2. put S/N
+ 197          //   memcpy(&TxBuff[sizeof(header)], DEV_sn, sizeof(DEV_sn)); 
+ 198          //   // 3. Gen CRC (skip) , FAKE CRC  
+ 199          // shaCalCrc(&TxBuff[1], SHA_CMD_MAC_SLOT0_IN_SIZE-3, &TxBuff[SHA_CMD_MAC_SLOT0_IN_SIZE-2]);
+ 200          // 
+ 201          //   ShaCmdSendRecv(TxBuff, SHA_CMD_MAC_SLOT0_IN_SIZE, RxBuff, 
+ 202          //      SHA_CMD_MAC_SLOT0_OUT_SIZE, SHA_CMD_MAC_DELAY);    // Response SN length is 
+ 203          //  
+ 204          //   if(RxBuff[0]==SHA_CMD_MAC_SLOT0_OUT_SIZE) {
+ 205          //      memcpy(buf, &RxBuff[1], pLen);    
+ 206          //      return 1;
+ 207          //   }
+ 208          //   return 0;
+ 209          //}
+ 210          
+ 211          /*********************************************************************
+ 212          // 2. Write the MAC to Slot 7
+ 213          // 27 12 82 38 00 48 AD C2 B1 99 B6 EB CD CF 4A C4 4C CD F5 FC E7 4D BF EA BD 24 58 BC 16 F9 D3 45 89 5D B
+             -D 73 E5 94 E5                             
+ 214          //                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+             -^^^^^^^
+ 215          // O/P 04 00 03 40
+ 216          *********************************************************************/
+ 217          #define SHA_CMD_WRITE_SLOT7_IN_SIZE      0x28     // Full packet will be: Word_address(03) + Count + (Cmd_
+             -Data) + CRC1 + CRC2 = Count + 1
+ 218          #define SHA_CMD_WRITE_SLOT7_OUT_SIZE     0x4     // expected return size
+ 219          #define SHA_CMD_WRITE_SLOT7_DELAY  5              // Max. 42ms
+ 220          
+ 221          Uint8 step2_writeToSlot7 (Uint8 *buf, Uint8 pLen) {   
+ 222   1         Uint8    xdata header[] = { 0x3, 0x27, 0x12, 0x82, 0x38, 0x00};
+ 223   1         Uint8    xdata test1[] = "test 123";
+ 224   1         
+ 225   1         // Copy Header
+ 226   1         memset(TxBuff, 0, sizeof(TxBuff));
+ 227   1         memcpy(TxBuff, header, sizeof(header));
+ 228   1         // 2. put MAC_my
+ 229   1         memcpy(&TxBuff[sizeof(header)], buf, pLen); 
+ 230   1         // 3. Gen CRC (skip)  
+ 231   1         shaCalCrc(&TxBuff[1], SHA_CMD_WRITE_SLOT7_IN_SIZE - 3, &TxBuff[SHA_CMD_WRITE_SLOT7_IN_SIZE-2]);
+ 232   1         
+ 233   1      // Delay10ms(40);
+C51 COMPILER V9.56.0.0   SHA_I2C                                                           03/10/2018 13:56:19 PAGE 5   
+
+ 234   1      // UrPrint(TxBuff, TxBuff[0]);
+ 235   1         
+ 236   1         ShaCmdSendRecv(TxBuff, SHA_CMD_WRITE_SLOT7_IN_SIZE, RxBuff, \
+ 237   1            SHA_CMD_WRITE_SLOT7_OUT_SIZE, SHA_CMD_MAC_DELAY);    // Response SN length is 
+ 238   1         
+ 239   1         if(RxBuff[0]==SHA_CMD_WRITE_SLOT7_OUT_SIZE && RxBuff[1]==0x0) {
+ 240   2            // Expecting got "04 00 03 40" means success
+ 241   2      //    Delay10ms(40);
+ 242   2      //    UrPrint(test1, sizeof(test1));
+ 243   2            return 1;
+ 244   2         }
+ 245   1         return 0;
+ 246   1      }
+ 247          
+ 248          /*********************************************************************
+ 249          // 3. MAC Command Sent: MAC (Slot 7 + RND_b)
+ 250          // 27 08 00 07 00 DC EC 42 F6 42 FB 8E 6E AC 1E D3 52 F5 F9 30 40 DC 73 F9 91 88 91 8F 6A 16 2D 50 43 13 9
+             -7 C3 02 FE 56
+ 251          //                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+             -^^^^^^^
+ 252          // O/P ANS_a = 23 6E 56 00 60 ... CRC1 CRC2
+ 253          *********************************************************************/
+ 254          #define SHA_CMD_MAC_SLOT7_IN_SIZE      0x28     // Full packet will be: Word_address(03) + Count + (Cmd_Da
+             -ta) + CRC1 + CRC2 = Count + 1
+ 255          #define SHA_CMD_MAC_SLOT7_OUT_SIZE     0x23     // expected return size
+ 256          Uint8 step3_getMACfromSlot7(Uint8 *buf, Uint8 pLen) {   
+ 257   1         Uint8    xdata header[] = { 0x3, 0x27, 0x8, 0, 7, 0};
+ 258   1         // Copy Header
+ 259   1         memset(TxBuff, 0, sizeof(TxBuff));
+ 260   1         memcpy(TxBuff, header, sizeof(header));
+ 261   1         // 2. put RND_b
+ 262   1         memcpy(&TxBuff[sizeof(header)], RND_b, sizeof(RND_b)); 
+ 263   1         // 3. Gen CRC (skip)   
+ 264   1         shaCalCrc(&TxBuff[1], SHA_CMD_MAC_SLOT7_IN_SIZE - 3, &TxBuff[SHA_CMD_MAC_SLOT7_IN_SIZE-2]);
+ 265   1         
+ 266   1         ShaCmdSendRecv(TxBuff, SHA_CMD_MAC_SLOT7_IN_SIZE, RxBuff, \
+ 267   1            SHA_CMD_MAC_SLOT7_OUT_SIZE, SHA_CMD_MAC_DELAY);    // Response SN length is 
+ 268   1        
+ 269   1         if(RxBuff[0]==SHA_CMD_MAC_SLOT7_OUT_SIZE) {
+ 270   2            memcpy(buf, &RxBuff[1], pLen);
+ 271   2            return 1;
+ 272   2         }
+ 273   1         return 0;
+ 274   1      }
+ 275          
+ 276          /*********************************************************************
+ 277          * Wakeup Command for ATSHA204A
+ 278          *********************************************************************/
+ 279          Uint8 I2CSha204Wakeup()
+ 280          {        
+ 281   1         // write code is here
+ 282   1         
+ 283   1         I2CMBUF = 0;        // set data to 0   
+ 284   1         I2CMCR = START+RUN;    
+ 285   1         Delay100us(1);    // at least 60us
+ 286   1         
+ 287   1         I2CMCR = STOP +RUN;
+ 288   1         Delay1ms (5);     // at least 2.5ms
+ 289   1         return PASS;
+ 290   1      }
+ 291          
+ 292          /*********************************************************************
+C51 COMPILER V9.56.0.0   SHA_I2C                                                           03/10/2018 13:56:19 PAGE 6   
+
+ 293          * SLEEP Command for ATSHA204A
+ 294          *********************************************************************/
+ 295          Uint8 I2CSha204Sleep() {
+ 296   1         
+ 297   1         I2CMSA = (I2C_ID_C8_SHA204 <<1); 
+ 298   1         
+ 299   1         while ( 0 != (I2CMCR & BUS_BUSY) )  ;
+ 300   1          
+ 301   1         
+ 302   1          // write code is here
+ 303   1          I2CMBUF = SHA_WORD_ADDRESS_SLEEP;        // set data to 0
+ 304   1          I2CMCR = START+STOP+RUN;   
+ 305   1          delay();      // delay 10 x "_nop_();"
+ 306   1         // previous is delay(), replace by delay
+ 307   1          while ( 0 != (I2CMCR & BUSY) )  ;                                             
+ 308   1      
+ 309   1          if ( I2CMCR & (ERROR+ARB_LOST) )
+ 310   1          {
+ 311   2              if ( 0 == (I2CMCR & ARB_LOST) )
+ 312   2                  I2CMCR = STOP;
+ 313   2      
+ 314   2              return FAIL;
+ 315   2          }
+ 316   1      
+ 317   1          return PASS;
+ 318   1      }
+ 319          
+ 320          /** \brief This function calculates CRC.
+ 321           *
+ 322           * \param[in] length number of bytes in buffer
+ 323           * \param[in] data pointer to data for which CRC should be calculated
+ 324           * \param[out] crc pointer to 16-bit CRC
+ 325           */
+ 326          void shaCalCrc(Uint8 * buff, Uint8 length, Uint8 *crc) {
+ 327   1         Uint8 counter;
+ 328   1         Uint16 crc_register = 0;
+ 329   1         Uint16 polynom = 0x8005;
+ 330   1         Uint8 shift_register;
+ 331   1         Uint8 data_bit, crc_bit;
+ 332   1      
+ 333   1         for (counter = 0; counter < length; counter++) {
+ 334   2           for (shift_register = 0x01; shift_register > 0x00; shift_register <<= 1) {
+ 335   3             data_bit = (buff[counter] & shift_register) ? 1 : 0;
+ 336   3             crc_bit = crc_register >> 15;
+ 337   3      
+ 338   3             // Shift CRC to the left by 1.
+ 339   3             crc_register <<= 1;
+ 340   3      
+ 341   3             if ((data_bit ^ crc_bit) != 0)
+ 342   3               crc_register ^= polynom;
+ 343   3           }
+ 344   2         }
+ 345   1         crc[0] = (Uint8) (crc_register & 0x00FF);
+ 346   1         crc[1] = (Uint8) (crc_register >> 8);
+ 347   1      }
+ 348          
+ 349          #endif
+ 350          
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =   1905    ----
+C51 COMPILER V9.56.0.0   SHA_I2C                                                           03/10/2018 13:56:19 PAGE 7   
+
+   CONSTANT SIZE    =     51    ----
+   XDATA SIZE       =    101    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

@@ -1,0 +1,1 @@
+"..\source\MasterI2C.c" LARGE OPTIMIZE (0,SPEED) BROWSE DEBUG OBJECTEXTEND PRINT(.\MasterI2C.lst) TABS (3) OBJECT(.\MasterI2C.obj)

@@ -1,0 +1,153 @@
+C51 COMPILER V9.56.0.0   MCU                                                               03/07/2018 17:45:36 PAGE 1   
+
+
+C51 COMPILER V9.56.0.0, COMPILATION OF MODULE MCU
+OBJECT MODULE PLACED IN .\MCU.obj
+COMPILER INVOKED BY: C:\Keil_v5\C51\BIN\C51.EXE ..\MCU\MCU.c LARGE OPTIMIZE(0,SPEED) BROWSE DEBUG OBJECTEXTEND PRINT(.\M
+                    -CU.lst) TABS(3) OBJECT(.\MCU.obj)
+
+line level    source
+
+   1          /*********************************************************************
+   2          **  File:       MCU.c
+   3          **  Updated:    2016-05-27
+   4          **  Description:
+   5          **  This file is the MCU function.
+   6          **
+   7          **  Copyright (C) 2016 AMICCOM Corp.
+   8          **
+   9          *********************************************************************/
+  10          #define _MCU_C_
+  11          #include "..\include\System_config.h"
+  12          
+  13          /************************************************************************
+  14          **  InitMCU
+  15          ************************************************************************/
+  16          void InitMCU(void)
+  17          {
+  18   1          P0      = 0x00;
+  19   1          P0OE    = 0xFF;
+  20   1          P0PUN   = 0xFF;
+  21   1          P0WUN   = 0xFF;
+  22   1      
+  23   1          P1      = 0x00;
+  24   1          P1OE    = 0xFF;
+  25   1          P1PUN   = 0xFF;
+  26   1          P1WUN   = 0xFF;
+  27   1      
+  28   1          P3      = 0xFF;
+  29   1          P3OE    = 0xC2;     //P3.0=RXD(input), P3.5=Mode Select(input)
+  30   1          P3PUN   = 0xC2;
+  31   1          P3WUN   = 0xFF;
+  32   1          
+  33   1          // IOSEL     |= 0x08;        //enable RF GPIO pin : GIO1=P0.7, GIO2=P1.2, CKO=P1.3
+  34   1      }
+  35          /************************************************************************
+  36          **  InitTimer0
+  37          ************************************************************************/
+  38          void InitTimer0(void)
+  39          {
+  40   1          TR0     = 0;
+  41   1          TMOD    = (TMOD & 0xF0) | 0x01; //Timer0 mode1
+  42   1          TH0     = (65536-t0hrel)>>8;    //setup Timer0 high byte, low byte
+  43   1          TL0     = 65536-t0hrel;
+  44   1          TF0     = 0;                    //Clear any pending Timer0 interrupts
+  45   1          ET0     = 1;                    //Enable Timer0 interrupt
+  46   1      }
+  47          
+  48          /************************************************************************
+  49          **  InitUART0_Timer1
+  50          ************************************************************************/
+  51          void InitUART0_Timer1(void)
+  52          {
+  53   1              IOSEL   |= 0x01;         //enable UART pin
+  54   1      
+C51 COMPILER V9.56.0.0   MCU                                                               03/07/2018 17:45:36 PAGE 2   
+
+  55   1              TR1     = 0;
+  56   1              TMOD    = (TMOD & 0x0F) | 0x20; //Timer1 mode2
+  57   1              TH1     = (256 - BaudRate_19200);//Baud Rate
+  58   1              TL1     = (256 - BaudRate_19200);//Baud Rate
+  59   1              PCON    = 0x80;                 //SMOD=1
+  60   1              CKCON   = 0x10;                 //T1M=1
+  61   1              SCON    = 0x40;                 //UATR0 mode1 : 8bits UART
+  62   1              T2CON   = 0x00;                 //UART0 use Timer1
+  63   1              REN     = 1;
+  64   1              TR1     = 1;
+  65   1              ES      = 1;                    //enable uart0 interrupt
+  66   1      }
+  67          
+  68          /************************************************************************
+  69          **  Timer0ISR
+  70          ************************************************************************/
+  71          void Timer0ISR(void) interrupt 1
+  72          {
+  73   1         // This is a 1ms Timer ISR
+  74   1          TH0 = (65536-t0hrel)>>8;    //Reload Timer0 high byte, low byte
+  75   1          TL0 = 65536-t0hrel;
+  76   1          TF0 = 0;
+  77   1      
+  78   1          timer++;
+  79   1          if(timer >= TIMEOUT)
+  80   1          {
+  81   2              TimeoutFlag=1;
+  82   2          }
+  83   1      
+  84   1          TimerCnt0++;
+  85   1          if(TimerCnt0 >= 500)
+  86   1          {
+  87   2               TimerCnt0=0;
+  88   2               if(btn_push_counting > 0) {
+  89   3                  btn_push_counting++;
+  90   3               }
+  91   2          }
+  92   1      }
+  93          
+  94          /************************************************************************
+  95          **  UART0ISR
+  96          ************************************************************************/
+  97          void UART0ISR(void) interrupt 4 using 3
+  98          {
+  99   1          if(TI)
+ 100   1          {
+ 101   2              TI=0;
+ 102   2              UartSendCnt--;
+ 103   2              if(UartSendCnt !=0)
+ 104   2              {
+ 105   3                  Uartptr++;
+ 106   3                  SBUF = *Uartptr;
+ 107   3              }
+ 108   2          }
+ 109   1      
+ 110   1          if(RI)
+ 111   1          {
+ 112   2              RI=0;
+ 113   2          }
+ 114   1      }
+ 115          
+ 116          /************************************************************************
+C51 COMPILER V9.56.0.0   MCU                                                               03/07/2018 17:45:36 PAGE 3   
+
+ 117          **  Err_State
+ 118          ************************************************************************/
+ 119          void Err_State(void)
+ 120          {
+ 121   1          //ERR display
+ 122   1          //Error Proc...
+ 123   1          //...
+ 124   1          while(1);
+ 125   1      }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    277    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =      3    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =      2    ----
+   IDATA SIZE       =      2    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

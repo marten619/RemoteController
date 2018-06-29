@@ -1,0 +1,376 @@
+C51 COMPILER V9.56.0.0   MASTERI2C                                                         03/10/2018 13:56:19 PAGE 1   
+
+
+C51 COMPILER V9.56.0.0, COMPILATION OF MODULE MASTERI2C
+OBJECT MODULE PLACED IN .\MasterI2C.obj
+COMPILER INVOKED BY: C:\Keil_v5\C51\BIN\C51.EXE ..\source\MasterI2C.c LARGE OPTIMIZE(0,SPEED) BROWSE DEBUG OBJECTEXTEND 
+                    -PRINT(.\MasterI2C.lst) TABS(3) OBJECT(.\MasterI2C.obj)
+
+line level    source
+
+   1          #define _MASTER_I2C_C_
+   2          
+   3          #include "..\include\System_config.h"
+   4          
+   5          
+   6          /*********************************************************************
+   7          * delay
+   8          *********************************************************************/
+   9          void delay(void)
+  10          {
+  11   1          Uint8 i;
+  12   1      
+  13   1          for ( i = 0; i < 10; i++ )
+  14   1              _nop_();
+  15   1      }
+  16          
+  17          /*********************************************************************
+  18          * I2C_MasterInit
+  19          *********************************************************************/
+  20          void I2C_MasterInit(void)
+  21          {
+  22   1          IOSEL |= BIT1;               // I2C0_SEL;
+  23   1          I2CMCR = RSTM;               // reset master module
+  24   1          I2CMTP = 0x05;               // SHA204(7), set speed : 2 x (1 + 6) x 10 x 78.128ns
+  25   1                                       // I2CMTP=6 (80Khz)
+  26   1                                       // I2CMTP=5 (101Khz)
+  27   1                                       // I2CMTP=1 (316Khz)
+  28   1          I2CMCR = SLRST + RUN;     // reset bus
+  29   1          while ( 0 != (I2CMCR & BUSY) )  ;
+  30   1          //P3_6 = 0;
+  31   1      }
+  32          
+  33          
+  34          /*********************************************************************
+  35          * I2C_Reset
+  36          *********************************************************************/
+  37          void I2C_Slave_Reset(void)
+  38          {
+  39   1          // I2CMCR = RSTM;               // reset master module
+  40   1          I2CMCR = SLRST + RUN;        // reset bus
+  41   1          while ( 0 != (I2CMCR & BUSY) )  ;
+  42   1          //P3_6 = 0;
+  43   1      }
+  44          
+  45          /*********************************************************************
+  46          * bus_busy
+  47          *********************************************************************/
+  48          void bus_busy(void)
+  49          {
+  50   1          while ( 0 != (I2CMCR & BUS_BUSY) );
+  51   1      }
+  52          
+  53          /*********************************************************************
+  54          * eep_busy
+C51 COMPILER V9.56.0.0   MASTERI2C                                                         03/10/2018 13:56:19 PAGE 2   
+
+  55          *********************************************************************/
+  56          void eep_busy(void)
+  57          {
+  58   1          while ( 0 == (I2CMCR & BUSY) )  ;
+  59   1          while ( 1 == (I2CMCR & BUSY) )  ;
+  60   1      }
+  61          
+  62          /*********************************************************************
+  63          * write_setup
+  64          *********************************************************************/
+  65          void write_setup(Uint8 slave_addr)
+  66          {
+  67   1          I2CMSA = (slave_addr<<1);
+  68   1      }
+  69          
+  70          /*********************************************************************
+  71          * I2cWrite
+  72          *********************************************************************/
+  73          Uint8 I2cWrite(Uint8 i2c_data, Uint8 mcr)
+  74          {
+  75   1          I2CMBUF = i2c_data;
+  76   1          I2CMCR = mcr;
+  77   1          delay();
+  78   1         // Oringinal code 
+  79   1         while ( 0 != (I2CMCR & BUSY) )  ;                                             
+  80   1         // change to 
+  81   1         //eep_busy();
+  82   1         
+  83   1          if ( I2CMCR & (ERROR+ARB_LOST) )
+  84   1          {
+  85   2              if ( 0 == (I2CMCR & ARB_LOST) )
+  86   2                  I2CMCR = STOP;
+  87   2      
+  88   2              return FAIL;
+  89   2          }
+  90   1      
+  91   1          return PASS;
+  92   1      }
+  93          
+  94          /*********************************************************************
+  95          * read_setup
+  96          *********************************************************************/
+  97          void read_setup(Uint8 slave_addr)
+  98          {
+  99   1          I2CMSA = (slave_addr<<1) | BIT0;
+ 100   1      }
+ 101          
+ 102          /*********************************************************************
+ 103          * I2cRead
+ 104          *********************************************************************/
+ 105          Uint8 I2cRead(Uint8 mcr)
+ 106          {
+ 107   1          I2CMCR = mcr;
+ 108   1          delay();
+ 109   1          while ( 0 != (I2CMCR & BUSY) )  ;
+ 110   1      
+ 111   1          if ( I2CMCR & (ERROR+ARB_LOST) )
+ 112   1          {
+ 113   2              if ( 0 == (I2CMCR & ARB_LOST) )
+ 114   2                  I2CMCR = STOP;
+ 115   2              return FAIL;
+ 116   2          }
+C51 COMPILER V9.56.0.0   MASTERI2C                                                         03/10/2018 13:56:19 PAGE 3   
+
+ 117   1      
+ 118   1          return PASS;
+ 119   1      }
+ 120          
+ 121          /*********************************************************************
+ 122          * I2CWriteData
+ 123          *********************************************************************/
+ 124          Uint8 I2CWriteData(Uint8 id, Uint8 *buf, Uint8 length)
+ 125          {
+ 126   1          Uint8 mcr;
+ 127   1          bit bSTART;
+ 128   1      
+ 129   1          if ( length == 0 )
+ 130   1              return FAIL;
+ 131   1      
+ 132   1          write_setup( id );
+ 133   1          bus_busy();
+ 134   1          bSTART = 1;
+ 135   1      
+ 136   1          while(length)
+ 137   1          {
+ 138   2              if ( length == 1 )
+ 139   2              {
+ 140   3                  if ( bSTART )
+ 141   3                  {
+ 142   4                      bSTART = 0;
+ 143   4                      mcr = START+STOP+RUN;
+ 144   4                  }
+ 145   3                  else
+ 146   3                  {
+ 147   4                      mcr = STOP+RUN;
+ 148   4                  }
+ 149   3              }
+ 150   2              else
+ 151   2              {
+ 152   3                  if ( bSTART )
+ 153   3                  {
+ 154   4                      bSTART = 0;
+ 155   4                      mcr = START+RUN;
+ 156   4                  }
+ 157   3                  else
+ 158   3                  {
+ 159   4                      mcr = RUN;
+ 160   4                  }
+ 161   3              }
+ 162   2      
+ 163   2              if ( PASS != I2cWrite(*buf, mcr) )
+ 164   2                  return FAIL;
+ 165   2              buf++; length--;
+ 166   2          }
+ 167   1      
+ 168   1          return PASS;
+ 169   1      }
+ 170          
+ 171          /*********************************************************************
+ 172          * I2CReadData
+ 173          *********************************************************************/
+ 174          Uint8 I2CReadData(Uint8 id, Uint8* buf, Uint8 length)
+ 175          {
+ 176   1          Uint8 mcr;
+ 177   1          bit bSTART;
+ 178   1      
+C51 COMPILER V9.56.0.0   MASTERI2C                                                         03/10/2018 13:56:19 PAGE 4   
+
+ 179   1          if ( length == 0 )
+ 180   1              return FAIL;
+ 181   1      
+ 182   1          read_setup(id);
+ 183   1          bus_busy();
+ 184   1          bSTART = 1;
+ 185   1      
+ 186   1          while(length)
+ 187   1          {
+ 188   2              if ( length == 1 )
+ 189   2              {
+ 190   3                  if ( bSTART )
+ 191   3                  {
+ 192   4                      bSTART = 0;
+ 193   4                      mcr = START+STOP+RUN;
+ 194   4                  }
+ 195   3                  else
+ 196   3                  {
+ 197   4                      mcr = STOP+RUN;
+ 198   4                  }
+ 199   3              }
+ 200   2              else
+ 201   2              {
+ 202   3                  if ( bSTART )
+ 203   3                  {
+ 204   4                      bSTART = 0;
+ 205   4                      mcr = START+ACK+RUN;
+ 206   4                  }
+ 207   3                  else
+ 208   3                  {
+ 209   4                      mcr = ACK+RUN;
+ 210   4                  }
+ 211   3              }
+ 212   2              if ( PASS != I2cRead(mcr) )
+ 213   2                  return FAIL;
+ 214   2              *buf++ = I2CMBUF; length--;
+ 215   2          }
+ 216   1          return PASS;
+ 217   1      }
+ 218          
+ 219          
+ 220          /*********************************************************************
+ 221          * WriteEEPROM
+ 222          *
+ 223          * EEPROM Page Write
+ 224          *      START ID a ADDR a DATA0 a DATA1 a .... DATA127 a STOP
+ 225          *********************************************************************/
+ 226          Uint8 WriteEEPROM(Uint8 id, Uint16 addr, Uint8 *buf, Uint8 length)
+ 227          {
+ 228   1          Uint8 mcr;
+ 229   1          Uint8 addr_l, addr_h;
+ 230   1          // Uint8 dat = *buf;
+ 231   1         
+ 232   1          if ( length > 128 )
+ 233   1              return FAIL;
+ 234   1          if ( length == 0 )
+ 235   1              return FAIL;
+ 236   1      
+ 237   1          addr &= (EEPROM_SIZE_BYTE -1);     // Size is 2KB
+ 238   1          
+ 239   1          addr_l = addr;
+ 240   1          addr_h = addr >> 8;
+C51 COMPILER V9.56.0.0   MASTERI2C                                                         03/10/2018 13:56:19 PAGE 5   
+
+ 241   1          
+ 242   1          write_setup( id | addr_h );           // Control Code + Block Select bits
+ 243   1          // I2CMSA = (id << 1);
+ 244   1          I2CMCR = START | RUN;
+ 245   1          while ( 1 == (I2CMCR & ADDR_ACK) )  ;
+ 246   1          //bus_busy();
+ 247   1          
+ 248   1      
+ 249   1      //  There is no High address byte in 24AA16
+ 250   1      //  I2CMBUF = addr_h;
+ 251   1      //  //I2CMCR = START | RUN;
+ 252   1      //    I2CMCR = RUN;
+ 253   1      //    //delay();
+ 254   1      //  eep_busy();
+ 255   1          
+ 256   1          I2CMBUF = addr_l;
+ 257   1          I2CMCR = RUN;
+ 258   1          //delay();
+ 259   1          eep_busy();
+ 260   1          
+ 261   1          while(length)
+ 262   1          {
+ 263   2              if ( length == 1 )
+ 264   2                  mcr = STOP+RUN;
+ 265   2              else
+ 266   2                  mcr = RUN;
+ 267   2      
+ 268   2              if ( PASS != I2cWrite(*buf, mcr) )
+ 269   2                  return FAIL;
+ 270   2              buf++; length--;
+ 271   2          }
+ 272   1      
+ 273   1          return PASS;
+ 274   1      }
+ 275          
+ 276          
+ 277          /*********************************************************************
+ 278          * ReadEEPROM
+ 279          *
+ 280          * EEPROM Sequential Read
+ 281          *
+ 282          *   START ID a ADDR a START ADDRESS1 a DATA a DATA
+ 283          *      a ... DATA n STOP
+ 284          *********************************************************************/
+ 285          Uint8 ReadEEPROM(Uint8 id, Uint16 addr, Uint8* buf, Uint8 length)
+ 286          {
+ 287   1          Uint8 mcr;
+ 288   1          Uint8 addr_l, addr_h;
+ 289   1          bit bSTART;
+ 290   1      
+ 291   1          if ( length == 0 )
+ 292   1              return FAIL;
+ 293   1      
+ 294   1          addr &= (EEPROM_SIZE_BYTE -1);     // Size is 2KB
+ 295   1          addr_l = addr;
+ 296   1          addr_h = addr >> 8;
+ 297   1          
+ 298   1          
+ 299   1          write_setup( id | addr_h );
+ 300   1          I2CMCR = START | RUN;
+ 301   1          while ( 1 == (I2CMCR & ADDR_ACK) )  ;
+ 302   1          //bus_busy();
+C51 COMPILER V9.56.0.0   MASTERI2C                                                         03/10/2018 13:56:19 PAGE 6   
+
+ 303   1          
+ 304   1          if ( PASS != I2cWrite(addr_l, RUN) )
+ 305   1              return FAIL;
+ 306   1          
+ 307   1      
+ 308   1          read_setup(id| addr_h);
+ 309   1          bSTART = 1;
+ 310   1      
+ 311   1          while(length)
+ 312   1          {
+ 313   2              if ( length == 1 )
+ 314   2              {
+ 315   3                  if ( bSTART )
+ 316   3                  {
+ 317   4                      bSTART = 0;
+ 318   4                      mcr = START+STOP+RUN;
+ 319   4                  }
+ 320   3                  else
+ 321   3                  {
+ 322   4                      mcr = STOP+RUN;
+ 323   4                  }
+ 324   3              }
+ 325   2              else
+ 326   2              {
+ 327   3                  if ( bSTART )
+ 328   3                  {
+ 329   4                      bSTART = 0;
+ 330   4                      mcr = START+ACK+RUN;
+ 331   4                  }
+ 332   3                  else
+ 333   3                  {
+ 334   4                      mcr = ACK+RUN;
+ 335   4                  }
+ 336   3              }
+ 337   2              if ( PASS != I2cRead(mcr) )
+ 338   2                  return FAIL;
+ 339   2              *buf++ = I2CMBUF; length--;
+ 340   2          }
+ 341   1          return PASS;
+ 342   1      }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    965    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =     40    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =     42    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =      5    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

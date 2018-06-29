@@ -1,0 +1,1335 @@
+C51 COMPILER V9.56.0.0   MAIN                                                              03/07/2018 17:45:35 PAGE 1   
+
+
+C51 COMPILER V9.56.0.0, COMPILATION OF MODULE MAIN
+OBJECT MODULE PLACED IN .\main.obj
+COMPILER INVOKED BY: C:\Keil_v5\C51\BIN\C51.EXE ..\source\main.c LARGE OPTIMIZE(0,SPEED) BROWSE DEBUG OBJECTEXTEND PRINT
+                    -(.\main.lst) TABS(3) OBJECT(.\main.obj)
+
+line level    source
+
+   1          /*********************************************************************
+   2          ** Device:     A9112-F4
+   3          ** File:    main.c
+   4          ** Target:     A9112-F4
+   5          ** Tools:      ICE
+   6          ** Updated: 2016-07-21
+   7          ** Description:
+   8          ** This file is a sample code for your reference.
+   9          **
+  10          ** Copyright (C) 2016 AMICCOM Corp.
+  11          **
+  12          *********************************************************************
+  13             SN Length = 8Bytes   
+  14             FOB#     XDATA
+  15             6        709
+  16             10       741
+  17             50       1061
+  18             100      1461
+  19          *********************************************************************
+  20             @2018-01-31
+  21             Program Size: data=79.4 xdata=1461 code=8388
+  22             creating hex file from "A9112F4"...
+  23             "A9112F4" - 0 Error(s), 1 Warning(s).
+  24             Build Time Elapsed:  00:00:01
+  25             Load "C:\\Projects\\Amicomm\\Remote Control A9112\\keil\\A9112F4" 
+  26             Flash Chip Erase Done.
+  27             Check Blank Done: 0 error(s).
+  28             Flash Write Done: 8388 bytes programmed.
+  29             Flash Verify Done: 8388 bytes verified.
+  30             Flash Load finished at 10:04:00
+  31          */
+  32          #define  _MAIN_
+  33          
+  34          #include "..\include\System_config.h"
+  35          
+  36          /********************************************************************/
+  37          // Extern Functions
+  38          /********************************************************************/
+  39          extern void    SHA_I2C_Init(void);
+  40          extern void    ShaCmdSendRecv(Uint8 *sbuf, Uint8 sLen, Uint8 *rbuf, Uint8 rLen,Uint8 delay);
+  41          extern Uint8   ShaReadSn (Uint8 *rbuf);
+  42          extern Uint8   ShaReadRnd (Uint8 *rbuf);
+  43          extern Uint8   I2CSha204Wakeup();
+  44          extern Uint8   I2CSha204Sleep();
+  45          extern void    step0_mixSnIntoRnd_b();
+  46          extern Uint8   step1_getMACfromSlot0(Uint8 *, Uint8 ,Uint8 *, Uint8 );  
+  47          
+  48          /****************************************
+  49          ** User definition
+  50          ****************************************/
+  51          Uint8   xdata    uartBuf[64];
+  52          Uint8   data    User_FOB;
+  53          Uint8   data    BTN1_Tripped;
+  54          Uint8   data    BTN2_Tripped;
+C51 COMPILER V9.56.0.0   MAIN                                                              03/07/2018 17:45:35 PAGE 2   
+
+  55          
+  56          Uint8   xdata   DEV_id[16];
+  57          Uint8   xdata   DEV_sn[8];      // Device unique SN
+  58          Uint8   xdata   RND_a[32];
+  59          Uint8   xdata   RND_b[32];       // get from Host
+  60          Uint8   xdata   ANS_a[32];
+  61          Uint8   xdata   ANS_b[32];
+  62          Uint8   xdata   MAC_my[32];      // User's MAC = sha(Slot 0, S/N)
+  63          Uint8   xdata   TX_cmd;
+  64          Uint8   xdata   ShaBuff[64];
+  65          Uint8   xdata   TxBuff[64];
+  66          Uint8   xdata   RxBuff[64];
+  67          Uint8   xdata   TxLen;
+  68          Uint8   xdata   RxLen;
+  69          Uint8   xdata   sysState;
+  70          Uint8   xdata   running_mode;
+  71          Uint8   xdata   numberOfKey;
+  72          Uint8   xdata   btn_push_counting;
+  73          Uint8   xdata   DeviceList[MAX_KEY_NUM][KEY_SIZE] = {0};
+  74          struct  EEP_T    xdata   E2P;
+  75          
+  76          /**********************************************
+  77          ** Local Function Decoration 
+  78          **********************************************/
+  79          void UrPrint (Uint8 *_ptr, Uint8 _len);
+  80          void KEYISR ( void );
+  81          void RF_sendData ( Uint8 _stat, Uint8 *buf, Uint8 bLen );
+  82          void RxPacket ( void );
+  83          Uint8 isSnInChecklist(Uint8 *ptr, Uint8 );
+  84          Uint8 calculateANS_a();
+  85          Uint8 calculateANS_b();
+  86          void setDoorOpen(void);
+  87          void setDoorClose(void);
+  88          void setWakeUpKeyIsr (void);
+  89          // EEPROM Functions
+  90          Uint8 eraseEeprom (void);
+  91          Uint8 loadEeprom (void);
+  92          Uint8 updateHeaderToEeprom (void);
+  93          Uint8 loadKeyFromEeprom(void);
+  94          Uint8 writeKeyToEeprom(void);
+  95          
+  96          
+  97          
+  98          /*********************************************************************
+  99          * ResetState
+ 100          *********************************************************************/
+ 101          void ResetState(void) {
+ 102   1         memset(RND_a, 0, sizeof(RND_a));
+ 103   1         memset(RND_b, 0, sizeof(RND_b));
+ 104   1         memset(ANS_a, 0, sizeof(ANS_a));
+ 105   1         memset(ANS_b, 0, sizeof(ANS_b));
+ 106   1         memset(MAC_my, 0, sizeof(MAC_my));
+ 107   1         memset(ShaBuff, 0, sizeof(ShaBuff));
+ 108   1         memset(TxBuff, 0, sizeof(TxBuff));
+ 109   1         memset(RxBuff, 0, sizeof(RxBuff));
+ 110   1         sysState = State_Standby;
+ 111   1         TX_cmd = 0;
+ 112   1         LED1 = OFF;
+ 113   1      }
+ 114          
+ 115          /*********************************************************************
+ 116          * Erase Eeprom Header
+C51 COMPILER V9.56.0.0   MAIN                                                              03/07/2018 17:45:35 PAGE 3   
+
+ 117          *********************************************************************/
+ 118          Uint8 eraseEeprom (void) {
+ 119   1         Uint8    i;
+ 120   1         
+ 121   1         memset(&E2P, 0, EEP_HEADER_SIZE);
+ 122   1         
+ 123   1         for (i=0; i < EEP_HEADER_SIZE; i++) {
+ 124   2            if(PASS != WriteEEPROM( EEPROM_DEVICE_ADDR, (EEP_HEADER_OFFSET+i), (&E2P+i), 1)) {
+*** WARNING C182 IN LINE 124 OF ..\source\main.c: pointer to different objects
+ 125   3               return FAIL;
+ 126   3            }  
+ 127   2            Delay1ms (5);
+ 128   2         }     
+ 129   1         return PASS;   
+ 130   1      }
+ 131          
+ 132          
+ 133          /*********************************************************************
+ 134          * Load Eeprom
+ 135          *********************************************************************/
+ 136          Uint8 loadEeprom (void) {
+ 137   1         // Uint8 *offset = &E2P;
+ 138   1         memset(&E2P, 0, EEP_HEADER_SIZE);
+ 139   1         if(PASS != ReadEEPROM(EEPROM_DEVICE_ADDR, EEP_HEADER_OFFSET, &E2P, EEP_HEADER_SIZE)) {
+*** WARNING C182 IN LINE 139 OF ..\source\main.c: pointer to different objects
+ 140   2            return FAIL;
+ 141   2         }
+ 142   1         
+ 143   1         // Check for Empty EEPROM
+ 144   1         if(E2P.Ver == 0) {
+ 145   2            E2P.Ver = SW_VERSION;
+ 146   2            E2P.KeyMax = MAX_KEY_NUM;
+ 147   2            E2P.KeySize = KEY_SIZE;
+ 148   2            E2P.KeyIndex = 0;
+ 149   2            memset(DeviceList, 0, sizeof(DeviceList));   
+ 150   2            // TBD: E2P.Crypto[4] = ???;     
+ 151   2            memcpy(&E2P.Crypto, &DEV_id[12], 4);      // copy Crypto S/N last 4 bytes
+ 152   2            
+ 153   2            // Write back to EEPROM
+ 154   2            if(PASS != updateHeaderToEeprom()) {
+ 155   3               return FAIL;
+ 156   3            }
+ 157   2            
+ 158   2         } else {
+ 159   2            // Verify crypto S/N 
+ 160   2            if(memcmp(&E2P.Crypto, &DEV_id[12], 4) != 0 ) {
+ 161   3               return FAIL;
+ 162   3            }
+ 163   2            
+ 164   2            if(PASS != loadKeyFromEeprom()) {
+ 165   3               return FAIL;
+ 166   3            }
+ 167   2         }     
+ 168   1         return PASS;
+ 169   1      }
+ 170          
+ 171          /*********************************************************************
+ 172          * Update Eeprom
+ 173          *********************************************************************/
+ 174          Uint8 updateHeaderToEeprom (void) {
+ 175   1         Uint16   i;
+ 176   1      
+C51 COMPILER V9.56.0.0   MAIN                                                              03/07/2018 17:45:35 PAGE 4   
+
+ 177   1         for (i=0; i < EEP_HEADER_SIZE; i++) {
+ 178   2            if(PASS != WriteEEPROM( EEPROM_DEVICE_ADDR, (EEP_HEADER_OFFSET+i), (&E2P.Ver + i), 1)) {
+ 179   3               return FAIL;
+ 180   3            }  
+ 181   2            Delay1ms (5);
+ 182   2         }  
+ 183   1            
+ 184   1         return PASS;
+ 185   1      }
+ 186          
+ 187          /*********************************************************************
+ 188          * writeKeyToEeprom
+ 189          *********************************************************************/
+ 190          Uint8 writeKeyToEeprom (void) {
+ 191   1         Uint16   i;
+ 192   1         Uint16   offset;
+ 193   1         
+ 194   1         offset = EEP_KEY_OFFSET + (E2P.KeyIndex * E2P.KeySize);
+ 195   1         
+ 196   1         for (i=0; i < KEY_SIZE; i++) {
+ 197   2            if(PASS != WriteEEPROM( EEPROM_DEVICE_ADDR, offset++, (DeviceList[E2P.KeyIndex]+i), 1)) {
+ 198   3               return FAIL;
+ 199   3            }  
+ 200   2            Delay1ms (5);
+ 201   2         }  
+ 202   1      
+ 203   1         E2P.KeyIndex++;
+ 204   1         updateHeaderToEeprom();
+ 205   1         return PASS;
+ 206   1      }
+ 207          
+ 208          
+ 209          /*********************************************************************
+ 210          * loadKeyFromEeprom
+ 211          *********************************************************************/
+ 212          Uint8 loadKeyFromEeprom (void) {
+ 213   1         // Load the all FOB S/N into list
+ 214   1         if(E2P.KeyIndex > 0) {
+ 215   2            if( PASS != ReadEEPROM(EEPROM_DEVICE_ADDR, EEP_KEY_OFFSET, DeviceList, E2P.KeySize*E2P.KeyIndex ) ) {
+*** WARNING C182 IN LINE 215 OF ..\source\main.c: pointer to different objects
+ 216   3               return FAIL;
+ 217   3            }
+ 218   2            Delay1ms (5);  
+ 219   2         }
+ 220   1         return PASS;
+ 221   1      }
+ 222          
+ 223          /*********************************************************************
+ 224          * main loop
+ 225          *********************************************************************/
+ 226          void main(void)
+ 227          {  
+ 228   1            PCON &=  ~0x10;   //PWE=0
+ 229   1        
+ 230   1            InitMCU();
+ 231   1         
+ 232   1            InitTimer0();
+ 233   1         
+ 234   1            InitUART0_Timer1();
+ 235   1         
+ 236   1            SHA_I2C_Init();
+ 237   1         
+C51 COMPILER V9.56.0.0   MAIN                                                              03/07/2018 17:45:35 PAGE 5   
+
+ 238   1            Delay100us(10);
+ 239   1         
+ 240   1            TR0=ENABLE; //Timer0 on
+ 241   1            EA=ENABLE;  //enable interrupt
+ 242   1         
+ 243   1            // Enable eraseEeprom() to clear Header of All Device Keys
+ 244   1            // eraseEeprom(); while(1);
+ 245   1         
+ 246   1            I2CSha204Wakeup();
+ 247   1            if(ShaReadSn(ShaBuff)) {
+ 248   2               memcpy(DEV_id, &ShaBuff[1], sizeof(DEV_id));  
+ 249   2               UrPrint(DEV_id, sizeof(DEV_id));
+ 250   2               Delay10ms ( 50 );
+ 251   2            }
+ 252   1            I2CSha204Sleep();
+ 253   1                  
+ 254   1            ResetState();
+ 255   1            
+ 256   1            Flag_MASTER = TRUE;
+ 257   1            
+ 258   1         if(Flag_MASTER)
+ 259   1         {
+ 260   2            // User FOB code
+ 261   2            // (1) Initial for User SN 
+ 262   2            memcpy(DEV_sn, &DEV_id[0], 4);  
+ 263   2            memcpy(&DEV_sn[4], &DEV_id[8], 4);  
+ 264   2      //    UrPrint(DEV_sn, sizeof(DEV_sn));
+ 265   2      //    Delay10ms ( 50);
+ 266   2            
+ 267   2            // (2) Initial RF
+ 268   2            InitRF();   //init RF
+ 269   2            ERFINT=ENABLE; //enable RF interrupt
+ 270   2            A9112_WriteReg(INTSW_REG, Enable_RFINT_WTR); //enable WTR interrupt
+ 271   2            Seq   = 0;
+ 272   2            FreqSet(HopTab[Seq]);
+ 273   2            
+ 274   2            // (3) Set system default state
+ 275   2            sysState = State_Standby;     
+ 276   2            
+ 277   2            while(1)
+ 278   2            {
+ 279   3               if(sysState == State_Standby) {     // User side 
+ 280   4                  BTN1_Tripped = 0;
+ 281   4                  BTN2_Tripped = 0;
+ 282   4                  // Setup KEY ISR before into sleep mode
+ 283   4                  setWakeUpKeyIsr();
+ 284   4                  // Into PM2 mode
+ 285   4                  A9112_PM(PM2);
+ 286   4                  
+ 287   4                  InitMCU();
+ 288   4                  InitTimer0();
+ 289   4                  // InitUART0_SBRG(); 
+ 290   4                  SHA_I2C_Init();
+ 291   4      
+ 292   4                  Delay100us ( 2);  
+ 293   4                  TR0 = 1;  //Timer0 on
+ 294   4                  EA = 1;   //enable interrupt           
+ 295   4                  // LED1 = 0;
+ 296   4               }
+ 297   3               
+ 298   3               if(BTN1_Tripped) {
+ 299   4                  BTN1_Tripped = 0;
+C51 COMPILER V9.56.0.0   MAIN                                                              03/07/2018 17:45:35 PAGE 6   
+
+ 300   4                  // LED1 = 1;            
+ 301   4                  TX_cmd = User_Command_1;
+ 302   4                  // Prepare TX buffer and send it out (RF)      
+ 303   4                  RF_sendData ( State_Request, DEV_sn, sizeof(DEV_sn));  //write data to tx fifo   
+ 304   4                  // LED1 = 0;
+ 305   4               }
+ 306   3               
+ 307   3               if(BTN2_Tripped) {
+ 308   4                  BTN2_Tripped = 0;
+ 309   4                  // LED1 = 1;            
+ 310   4                  TX_cmd = User_Command_2;
+ 311   4                  // Prepare TX buffer and send it out (RF)      
+ 312   4                  RF_sendData ( State_Request, DEV_sn, sizeof(DEV_sn));  //write data to tx fifo   
+ 313   4                  // LED1 = 0;
+ 314   4               }
+ 315   3      
+ 316   3               StrobeCMD(CMD_RX);
+ 317   3               timer=0;
+ 318   3               TimeoutFlag=0;
+ 319   3               RF_FLAG=1;
+ 320   3               
+ 321   3               while((RF_FLAG==1) && (TimeoutFlag==0));  //wait receive completed or   timeout
+ 322   3               
+ 323   3               if ( TimeoutFlag ) {
+ 324   4                  ResetState();
+ 325   4                  StrobeCMD (CMD_STBY);
+ 326   4               } else   {
+ 327   4                  RxPacket();
+ 328   4                  // Delay10ms ( 10);
+ 329   4               }              
+ 330   3            }  // end of while(1) loop
+ 331   2         }
+ 332   1         else
+ 333   1         {
+ 334   2            // Door side codes
+ 335   2            running_mode = Operation_Mode;
+ 336   2            
+ 337   2            // (0) GPIO P0 -> OFF
+ 338   2            P1 = P1 & 0x31;
+ 339   2            // (1) Preload User S/N into list
+ 340   2            memset(DeviceList, 0, sizeof(DeviceList));
+ 341   2            loadEeprom();  
+ 342   2            UrPrint(&E2P.Ver, EEP_HEADER_SIZE);
+ 343   2            Delay10ms (50);
+ 344   2            if(E2P.KeyIndex > 0) {
+ 345   3               UrPrint(&DeviceList[0][0], KEY_SIZE * E2P.KeyIndex);
+ 346   3               Delay10ms (50);         
+ 347   3            }
+ 348   2            
+ 349   2            // (2) Initial RF
+ 350   2            InitRF();   //init RF
+ 351   2            ERFINT=ENABLE; //enable RF interrupt
+ 352   2            A9112_WriteReg(INTSW_REG, Enable_RFINT_WTR); //enable WTR interrupt
+ 353   2      
+ 354   2            Seq   = 0;
+ 355   2            //RxCnt =   0;
+ 356   2            //Err_ByteCnt  = 0;
+ 357   2            //Err_BitCnt = 0;
+ 358   2            FreqSet(HopTab[Seq]);
+ 359   2            // setWakeUpKeyIsr();
+ 360   2            
+ 361   2            while(1)
+C51 COMPILER V9.56.0.0   MAIN                                                              03/07/2018 17:45:35 PAGE 7   
+
+ 362   2            {
+ 363   3               if(BTN1 ==0) {
+ 364   4                  btn_push_counting = 1;           
+ 365   4                  // Wait until BTN be released 
+ 366   4                  while (!BTN1) {
+ 367   5                     if( btn_push_counting >= Learning_Mode_Seconds){
+ 368   6                        LED2 = btn_push_counting & 1;
+ 369   6                     }
+ 370   5                  }
+ 371   4                  
+ 372   4                  if( running_mode == Operation_Mode ) {
+ 373   5                     if(btn_push_counting >= Learning_Mode_Seconds) {
+ 374   6                        LED2 = ON;
+ 375   6                        running_mode = Learning_Mode;
+ 376   6                     }
+ 377   5                  } else {
+ 378   5                     running_mode = Operation_Mode;
+ 379   5                     LED2 = OFF;
+ 380   5                  }
+ 381   4                  btn_push_counting = 0;
+ 382   4               }
+ 383   3               
+ 384   3               StrobeCMD(CMD_RX);
+ 385   3               
+ 386   3               timer=0;
+ 387   3               TimeoutFlag=0;
+ 388   3               RF_FLAG=1;
+ 389   3               
+ 390   3               while((RF_FLAG==1) && (TimeoutFlag==0));  //wait receive completed or   timeout
+ 391   3               
+ 392   3               if ( TimeoutFlag ) {
+ 393   4      //          if( running_mode != Learning_Mode) {
+ 394   4      //             ResetState();     // No response from FOB, reset state
+ 395   4      //          }
+ 396   4                  StrobeCMD (CMD_STBY);
+ 397   4               } else   {
+ 398   4                  RxPacket();
+ 399   4                  // Delay10ms ( 10);
+ 400   4               }           
+ 401   3            }
+ 402   2         }     // end of else 
+ 403   1      }        // end of main()
+ 404          
+ 405          /************************************************************************
+ 406          ** UrPrint
+ 407          ************************************************************************/
+ 408          void UrPrint (Uint8 *_ptr, Uint8 _len) {
+ 409   1         if(_len) {
+ 410   2            memcpy ( uartBuf, _ptr, _len );     
+ 411   2            UartSendCnt = _len;
+ 412   2            Uartptr = &uartBuf[0];
+ 413   2            SBUF = uartBuf[0];
+ 414   2         }
+ 415   1      }
+ 416          
+ 417          /************************************************************************
+ 418          ** setDoorOpen
+ 419          ************************************************************************/
+ 420          void setDoorOpen(void) {
+ 421   1         // LED1 = 1;
+ 422   1         BUZZER =1;
+ 423   1         
+C51 COMPILER V9.56.0.0   MAIN                                                              03/07/2018 17:45:35 PAGE 8   
+
+ 424   1         // Debug message on UART
+ 425   1      // RxBuff[0]='O';
+ 426   1      // RxBuff[1]='p';
+ 427   1      // RxBuff[2]='e';
+ 428   1      // RxBuff[3]='n';
+ 429   1      // 
+ 430   1      // UrPrint(RxBuff, 4);
+ 431   1      // Delay10ms ( 50); 
+ 432   1      }
+ 433          
+ 434          /************************************************************************
+ 435          ** setDoorClose
+ 436          ************************************************************************/
+ 437          void setDoorClose(void) {
+ 438   1         // LED1 = 0;
+ 439   1         BUZZER = 0;
+ 440   1         
+ 441   1         // Debug message on UART
+ 442   1      // RxBuff[0]='C';
+ 443   1      // RxBuff[1]='l';
+ 444   1      // RxBuff[2]='o';
+ 445   1      // RxBuff[3]='s';
+ 446   1      // RxBuff[4]='e';
+ 447   1      // UrPrint(RxBuff, 5);
+ 448   1      // Delay10ms ( 50); 
+ 449   1      }
+ 450          
+ 451          /************************************************************************
+ 452          ** A9112_WriteFIFO
+ 453          ************************************************************************/
+ 454          void A9112_WriteFIFO(void)
+ 455          {
+ 456   1      // Uint16 i;
+ 457   1      
+ 458   1      // ResetCMD(TXPOINT_RST);  //TX FIFO address pointer reset
+ 459   1      // for(i=0; i<64; i++)
+ 460   1      // {
+ 461   1      //    A9112_WriteReg((i +  TX_FIFO), PN9_Tab[i]);
+ 462   1      // }
+ 463   1      }
+ 464          
+ 465          /************************************************************************
+ 466          **  A9112_WriteFIFO
+ 467          ************************************************************************/
+ 468          void RF_sendData ( Uint8 _stat, Uint8 *buf, Uint8 bLen )
+ 469          {
+ 470   1         Uint16 i;
+ 471   1         memset(TxBuff,0, sizeof(TxBuff));
+ 472   1         TxBuff[0] = bLen+2;    // Add Count & State
+ 473   1         TxBuff[1] = _stat;            
+ 474   1         memcpy(&TxBuff[2], buf, bLen);
+ 475   1      
+ 476   1         // Dump send data here
+ 477   1      //   UrPrint(TxBuff, TxBuff[0]);
+ 478   1      //   Delay10ms (50);  
+ 479   1      
+ 480   1         // RF_sendData ( TxBuff[0]);  //write data to tx fifo          
+ 481   1         ResetCMD(TXPOINT_RST); //TX FIFO address pointer reset
+ 482   1         for ( i = 0; i < TxBuff[0]; i++ ) {
+ 483   2            A9112_WriteReg ( ( i + TX_FIFO ), TxBuff[i] );
+ 484   2         }
+ 485   1      
+C51 COMPILER V9.56.0.0   MAIN                                                              03/07/2018 17:45:35 PAGE 9   
+
+ 486   1         StrobeCMD ( CMD_TX );
+ 487   1         RF_FLAG = 1;
+ 488   1         while ( RF_FLAG );    //wait transmit completed
+ 489   1         Delay100us (2);  //delay 200us for TX ramp down
+ 490   1      
+ 491   1      }
+ 492          
+ 493          /************************************************************************
+ 494          ** RxPacket
+ 495          ************************************************************************/
+ 496          void RxPacket(void)
+ 497          {
+ 498   1         Uint16  i;
+ 499   1         
+ 500   1         Uint8   idx;
+ 501   1         //Uint8   fault;
+ 502   1         //Uint8     xdata tt [] = { 0xd, 0xa, 1,2,3,4,5,0xd,0xa};
+ 503   1      
+ 504   1         memset(RxBuff, 0, sizeof(RxBuff));
+ 505   1         RxCnt++;
+ 506   1         ResetCMD (RXPOINT_RST); //RX FIFO address pointer reset
+ 507   1         RxLen =   A9112_ReadReg ( RX_FIFO );
+ 508   1      
+ 509   1         if(RxLen) {
+ 510   2            sysState = A9112_ReadReg ( 1 + RX_FIFO );
+ 511   2            for ( i = 2; i < RxLen; i++ ) {
+ 512   3               RxBuff[i-2] = A9112_ReadReg ( i + RX_FIFO );
+ 513   3            }
+ 514   2         }
+ 515   1      
+ 516   1         // Dump RxBuff
+ 517   1      // UrPrint(RxBuff, sizeof(RxBuff));
+ 518   1      // Delay10ms ( 50);  
+ 519   1         
+ 520   1         if(sysState == State_Request) {     // Host(Door) side receive this packet
+ 521   2            // check if SN is accepted, if yes, send RND_b
+ 522   2            if(RxBuff[0] != 0x01) 
+ 523   2               return ;
+ 524   2            idx = isSnInChecklist(RxBuff, sizeof(DEV_sn));
+ 525   2            
+ 526   2            if( running_mode == Learning_Mode) {
+ 527   3               if(idx>=MAX_KEY_NUM) { 
+ 528   4                  LED1 = ~LED1;
+ 529   4                  // Not in the DeviceList, add new SN into List
+ 530   4                  // memcpy(DeviceList[numberOfKey++], RxBuff, sizeof(DEV_sn)); 
+ 531   4                  memcpy(DeviceList[E2P.KeyIndex], RxBuff, sizeof(DEV_sn)); 
+ 532   4      //          UrPrint(RxBuff, sizeof(DEV_sn));
+ 533   4      //          Delay10ms (50); 
+ 534   4                  if(PASS != writeKeyToEeprom()) {
+ 535   5                     // if update failure, remove key data
+ 536   5                     memcpy(DeviceList[E2P.KeyIndex], 0, sizeof(DEV_sn)); 
+ 537   5                  }
+ 538   4               }
+ 539   3            } else {
+ 540   3               if(idx < MAX_KEY_NUM) { 
+ 541   4                  // A FOB request is here, reset internal status
+ 542   4                  ResetState();  
+ 543   4                  
+ 544   4                  // if found, copy S/N into DEV_sn
+ 545   4                  memcpy(DEV_sn, DeviceList[idx], sizeof(DEV_sn)); 
+ 546   4      //          UrPrint(DEV_sn, sizeof(DEV_sn));
+ 547   4      //          Delay10ms (50); 
+C51 COMPILER V9.56.0.0   MAIN                                                              03/07/2018 17:45:35 PAGE 10  
+
+ 548   4               
+ 549   4                  // Get RND_b
+ 550   4                  I2CSha204Wakeup();
+ 551   4                  if(ShaReadRnd(ShaBuff)) {        // The first byte is size
+ 552   5                     ShaBuff[0] = idx;              // Put SN index number       
+ 553   5                     // fix RND_b for debugging
+ 554   5                     // memset(&ShaBuff[1], 0, 32);   // enable this line to fix the RND_b      
+ 555   5                     memcpy(RND_b, &ShaBuff[1], sizeof(RND_b));
+ 556   5                     
+ 557   5                     // Send idx+RND_b to User        
+ 558   5                     RF_sendData ( State_Challenge, ShaBuff, sizeof(RND_b)+1 );   
+ 559   5      //             UrPrint(ShaBuff, sizeof(ShaBuff));
+ 560   5      //             Delay10ms (50); 
+ 561   5                  }           
+ 562   4                  I2CSha204Sleep();
+ 563   4               }     // end of if(idx < MAX_KEY_NUM) { 
+ 564   3            }        // end of if( running_mode == Learning_Mode) {
+ 565   2            // LED1 = OFF;
+ 566   2            return;    
+ 567   2         }
+ 568   1      
+ 569   1         if(sysState == State_Challenge) {     // User side 
+ 570   2            // Get idx and RND_b, then calculate the ANS_a
+ 571   2            LED1 = ON;
+ 572   2            idx = RxBuff[0];
+ 573   2            memcpy(RND_b, &RxBuff[1], sizeof(RND_b));  
+ 574   2         
+ 575   2      //    UrPrint(RND_b, sizeof(RND_b));
+ 576   2      //    Delay10ms ( 50); 
+ 577   2      
+ 578   2            if(calculateANS_a()) {
+ 579   3               // Move idx +  CMD + ANS_a to TxBuff, then send it out
+ 580   3               memset(ShaBuff, 0, sizeof(ShaBuff));
+ 581   3               ShaBuff[0] = idx;
+ 582   3               ShaBuff[1] = TX_cmd;
+ 583   3               memcpy(&ShaBuff[2], ANS_a, sizeof(ANS_a));  
+ 584   3               RF_sendData ( State_Response, ShaBuff, sizeof(ANS_a)+2 );   
+ 585   3      //       Delay10ms ( 50);  
+ 586   3      //       UrPrint(TxBuff, TxBuff[0]);         
+ 587   3            }
+ 588   2            LED1=OFF;
+ 589   2            sysState = State_Standby;
+ 590   2            return;    
+ 591   2         }
+ 592   1      
+ 593   1         if(sysState == State_Response) {     // Host side 
+ 594   2            // FOB replied idx, TX_cmd & ANS_a to Host
+ 595   2            // So, host gets idx, read S/N from DeviceList, then calculate the ANS_b
+ 596   2            idx = RxBuff[0];
+ 597   2            TX_cmd = RxBuff[1];
+ 598   2            
+ 599   2            if(idx <MAX_KEY_NUM) {
+ 600   3               memcpy(DEV_sn, DeviceList[idx], sizeof(DEV_sn));  
+ 601   3               memcpy(ANS_a, &RxBuff[2], sizeof(ANS_a));                         
+ 602   3               
+ 603   3               // Calculate ANS_b
+ 604   3               if(calculateANS_b()){   
+ 605   4      //          UrPrint(ANS_a, sizeof(ANS_a));
+ 606   4      //          Delay10ms ( 100);             
+ 607   4      //          UrPrint(ANS_b, sizeof(ANS_b));
+ 608   4      //          Delay10ms ( 100); 
+ 609   4                  // Compare with ANS_a and ANS_b
+C51 COMPILER V9.56.0.0   MAIN                                                              03/07/2018 17:45:35 PAGE 11  
+
+ 610   4                  // Delay10ms ( 50);  UrPrint(tt, sizeof(tt));   
+ 611   4                  if(!memcmp(ANS_a, ANS_b, sizeof(ANS_b))) {
+ 612   5                     // if same, execute TX_cmd here
+ 613   5                     if(TX_cmd==User_Command_1) {                 
+ 614   6                        setDoorOpen();
+ 615   6                     }
+ 616   5                     if(TX_cmd==User_Command_2) {
+ 617   6                        setDoorClose();
+ 618   6                     }
+ 619   5                  }  
+ 620   4               }
+ 621   3                
+ 622   3            }        // end of if(idx ...
+ 623   2            // Reset to Stnadby
+ 624   2            ResetState();
+ 625   2         }    // end of if(stat == State_Response) {   
+ 626   1      }
+ 627          
+ 628          /****************************************************
+ 629          ** Crypto Functions
+ 630          ****************************************************/
+ 631          Uint8 calculateANS_a() {
+ 632   1         Uint8 Okey =0;
+ 633   1       
+ 634   1      // UrPrint(DEV_sn, sizeof(DEV_sn));
+ 635   1      // Delay10ms ( 50);  
+ 636   1         
+ 637   1         step0_mixSnIntoRnd_b();
+ 638   1         
+ 639   1      // Delay10ms ( 50);  
+ 640   1      // UrPrint(RND_b, sizeof(RND_b));
+ 641   1      // Delay10ms ( 50);  
+ 642   1      // UrPrint(tt, 2);
+ 643   1         
+ 644   1         I2CSha204Wakeup();
+ 645   1         
+ 646   1         // Step 1: Get Mac (Slot0+SN)
+ 647   1         if(step1_getMACfromSlot0(ANS_a, sizeof(ANS_a), RND_b, sizeof(RND_b))){     
+ 648   2               Okey= 1;
+ 649   2         }
+ 650   1         
+ 651   1         I2CSha204Sleep();
+ 652   1            
+ 653   1      
+ 654   1         return Okey;
+ 655   1            
+ 656   1      }
+ 657          
+ 658          Uint8 calculateANS_b() {
+ 659   1         Uint8 Okey =0;
+ 660   1         //Uint8  xdata tt [] = { 0xd, 0xa};
+ 661   1         
+ 662   1      // UrPrint(DEV_sn, sizeof(DEV_sn));
+ 663   1      // Delay10ms ( 50);  
+ 664   1         
+ 665   1         step0_mixSnIntoRnd_b();
+ 666   1         
+ 667   1      // Delay10ms ( 50);  
+ 668   1      // UrPrint(RND_b, sizeof(RND_b));
+ 669   1         
+ 670   1         I2CSha204Wakeup();
+ 671   1         
+C51 COMPILER V9.56.0.0   MAIN                                                              03/07/2018 17:45:35 PAGE 12  
+
+ 672   1         // Step 1: Get Mac (Slot0+SN)  
+ 673   1         if(step1_getMACfromSlot0(ANS_b, sizeof(ANS_b), RND_b, sizeof(RND_b))){     
+ 674   2            Okey = 1;
+ 675   2         }
+ 676   1         I2CSha204Sleep();
+ 677   1         
+ 678   1      // Delay10ms ( 50);  UrPrint(tt, 2);
+ 679   1      // Delay10ms ( 50);  UrPrint(ANS_a, sizeof(ANS_a));
+ 680   1      // Delay10ms ( 50);  UrPrint(tt, 2);
+ 681   1      // Delay10ms ( 50);  UrPrint(ANS_b, sizeof(ANS_b));
+ 682   1      // Delay10ms ( 50);  UrPrint(tt, 2);
+ 683   1         
+ 684   1         
+ 685   1         return Okey;
+ 686   1      }
+ 687          
+ 688          /* Function tested !!*/
+ 689          Uint8 isSnInChecklist(Uint8 *buff, Uint8 _len){
+ 690   1         Uint8 i; 
+ 691   1      
+ 692   1         for(i=0; i<MAX_KEY_NUM; i++){
+ 693   2            if(DeviceList[i][0] != 0x01) {
+ 694   3               return MAX_KEY_NUM;
+ 695   3            }
+ 696   2            if(!memcmp(DeviceList[i], buff, _len)) {     
+ 697   3               // Found!!
+ 698   3               return i;
+ 699   3            }
+ 700   2         }
+ 701   1         return MAX_KEY_NUM;
+ 702   1      }
+ 703          
+ 704          void setWakeUpKeyIsr (void){
+ 705   1         // P3WUN=0xF3; // P3_2, P3_3 are enabled 
+ 706   1         EKEYINT=1;  
+ 707   1      }
+ 708          
+ 709          /************************************************************************
+ 710          **  KEYISR
+ 711          ************************************************************************/
+ 712          void KEYISR ( void ) interrupt 11
+ 713          {
+ 714   1         EIF |= 0x10;      // Clear Flag
+ 715   1         EKEYINT=0;
+ 716   1         
+ 717   1         // check which bottom is pressed
+ 718   1         if(BTN1 ==0) {
+ 719   2            BTN1_Tripped = 1;
+ 720   2            LED1=ON;
+ 721   2         }
+ 722   1         if(BTN2 ==0) {
+ 723   2            BTN2_Tripped = 1;
+ 724   2            LED1=ON;
+ 725   2         }  
+ 726   1         /*
+ 727   1         P1OE |= 0x40;
+ 728   1         P1PUN |= 0x40;
+ 729   1         LED2 = 1;*/
+ 730   1      }
+ 731          
+ 732          /************************************************************************
+ 733          ** RTC_Enable
+C51 COMPILER V9.56.0.0   MAIN                                                              03/07/2018 17:45:35 PAGE 13  
+
+ 734          ************************************************************************/
+ 735          void RTC_Enable(void)
+ 736          {
+ 737   1         IOSEL    |= 0x10; //enable RTCIOS
+ 738   1         P3OE     &= 0x3F;
+ 739   1         P3PUN    &= 0x3F;
+ 740   1      
+ 741   1         //A9112_WriteReg(CKO_REG, 0x50); //ROSC
+ 742   1      
+ 743   1         A9112_WriteReg(RCOSC3_REG, A9112Config[RCOSC3_REG -   CONFIG]  | 0x04); //TMRE=1
+ 744   1         A9112_WriteReg(RTC_REG, 0x01);   //RTCE=1
+ 745   1         A9112_WriteReg(RCOSC4_REG, A9112Config[RCOSC4_REG -   CONFIG]  | 0x80); //RCOT[2]=1
+ 746   1         
+ 747   1         //delay  for   RTC   stabilized
+ 748   1         //...
+ 749   1         //...
+ 750   1      }
+ 751          
+ 752          /*********************************************************************
+ 753          ** WOR_enable_by_preamble
+ 754          *********************************************************************/
+ 755          void WOR_enable_by_preamble(void)
+ 756          {
+ 757   1         RCOSC_Cal();      //internal RC OSC CAL
+ 758   1         //RTC_Enable();      //use external RC OSC
+ 759   1            
+ 760   1         //A9112_WriteReg(CKO_REG, 0x08); //CKO=RCK
+ 761   1         //A9112_WriteReg(GPIO1_REG,   (A9112Config[GPIO1_REG - CONFIG] & 0xC0) | 0x0D);  //GPIO1=PMDO
+ 762   1         //A9112_WriteReg(GPIO1_REG,   (A9112Config[GPIO1_REG - CONFIG] & 0xC0) | 0x11);  //GPIO1=TWWS
+ 763   1         //A9112_WriteReg(GPIO2_REG,   (A9112Config[GPIO2_REG - CONFIG] & 0xC0) | 0x01);  //GPIO2=WTR
+ 764   1      
+ 765   1         //setup  WOR   Sleep time and Rx time
+ 766   1         //WOR Active Period  = (WOR_AC[8:0]+1) x  (1/32768), (30.5us ~ 15.6ms).
+ 767   1         //WOR Sleep  Period  = (WOR_SL[9:0]+1) x  (32/4096), (7.8ms ~  7.99s).
+ 768   1         A9112_WriteReg(RCOSC1_REG, 0x7F);   //WOR_SL[9:0]=127 :  WOR   Sleep  Period ~   1s 
+ 769   1         A9112_WriteReg(RCOSC2_REG, 0x00);
+ 770   1         A9112_WriteReg(TCODE_REG, 0x80); //WOR_AC[8:0]=256 :  WOR   Active Period ~   7.84ms
+ 771   1      
+ 772   1         //WOR_HOLD : WOR hold RX setting when preamble/sync/carrier detected ok.
+ 773   1         //       [0]: No  hold. [1]: Hold   RX.
+ 774   1         //WOR_SEL: TWWS=1 setting. 
+ 775   1         //       [0]:RX valid packet.  [1]: preamble/sync/carrier  detected ok.
+ 776   1         //WOR_RST: Shall be  set   to [1].
+ 777   1         A9112_WriteReg(WOR_REG, 0x3A);   //by preamble, WOR_HOLD=1, WOR_SEL=1, WOR_RST=1
+ 778   1      
+ 779   1         StrobeCMD(CMD_STBY);
+ 780   1      
+ 781   1         ERFINT=ENABLE; //enable RF interrupt   
+ 782   1         A9112_WriteReg(INTSW_REG, Enable_RFINT_TWWS);   //enable TWWS INT 
+ 783   1      
+ 784   1         A9112_WriteReg(MODEC2_REG, A9112Config[MODEC2_REG -   CONFIG]  | 0x08); //enable WOR function
+ 785   1      
+ 786   1         A9112_PM(PM1);
+ 787   1         //A9112_PM(PM2);
+ 788   1         
+ 789   1         //WOR_SEL=1 : preamble/sync/carrier detected ok -> TWWS  go high  -> wake  up MCU
+ 790   1         //defined process by user
+ 791   1         //...
+ 792   1         //...
+ 793   1         //StrobeCMD(CMD_STBY);  //TWWS reset by   strobe command.
+ 794   1      }
+ 795          
+C51 COMPILER V9.56.0.0   MAIN                                                              03/07/2018 17:45:35 PAGE 14  
+
+ 796          /*********************************************************************
+ 797          ** WOR_enable_by_sync
+ 798          *********************************************************************/
+ 799          void WOR_enable_by_sync(void)
+ 800          {
+ 801   1         RCOSC_Cal();      //internal RC OSC CAL
+ 802   1         //RTC_Enable();      //use external RC OSC
+ 803   1            
+ 804   1         //A9112_WriteReg(CKO_REG, 0x08); //CKO=RCK
+ 805   1         //A9112_WriteReg(GPIO1_REG,   (A9112Config[GPIO1_REG - CONFIG] & 0xC0) | 0x05);  //GPIO1=FSYNC
+ 806   1         //A9112_WriteReg(GPIO1_REG,   (A9112Config[GPIO1_REG - CONFIG] & 0xC0) | 0x11);  //GPIO1=TWWS
+ 807   1         //A9112_WriteReg(GPIO2_REG,   (A9112Config[GPIO2_REG - CONFIG] & 0xC0) | 0x01);  //GPIO2=WTR
+ 808   1      
+ 809   1         //setup  WOR   Sleep time and Rx time
+ 810   1         //WOR Active Period  = (WOR_AC[8:0]+1) x  (1/32768), (30.5us ~ 15.6ms).
+ 811   1         //WOR Sleep  Period  = (WOR_SL[9:0]+1) x  (32/4096), (7.8ms ~  7.99s).
+ 812   1         A9112_WriteReg(RCOSC1_REG, 0x7F);   //WOR_SL[9:0]=127 :  WOR   Sleep  Period ~   1s 
+ 813   1         A9112_WriteReg(RCOSC2_REG, 0x00);
+ 814   1         A9112_WriteReg(TCODE_REG, 0x80); //WOR_AC[8:0]=256 :  WOR   Active Period ~   7.84ms
+ 815   1      
+ 816   1         //WOR_HOLD : WOR hold RX setting when preamble/sync/carrier detected ok.
+ 817   1         //       [0]: No  hold. [1]: Hold   RX.
+ 818   1         //WOR_SEL: TWWS=1 setting. 
+ 819   1         //       [0]:RX valid packet.  [1]: preamble/sync/carrier  detected ok.
+ 820   1         //WOR_RST: Shall be  set   to [1].
+ 821   1         A9112_WriteReg(WOR_REG, 0x28);   //by sync, WOR_HOLD=1, WOR_SEL=0, WOR_RST=1
+ 822   1      
+ 823   1         StrobeCMD(CMD_STBY);
+ 824   1      
+ 825   1         ERFINT=ENABLE;  //enable RF interrupt   
+ 826   1         A9112_WriteReg(INTSW_REG, Enable_RFINT_TWWS);   //enable TWWS INT 
+ 827   1      
+ 828   1         A9112_WriteReg(MODEC2_REG, A9112Config[MODEC2_REG -   CONFIG]  | 0x08); //enable WOR function
+ 829   1      
+ 830   1         A9112_PM(PM1);
+ 831   1         //A9112_PM(PM2);
+ 832   1      
+ 833   1         //WOR_SEL=0 : RX valid packet -> TWWS go high -> wake up MCU
+ 834   1         //check  data
+ 835   1         RxPacket();
+ 836   1         StrobeCMD(CMD_STBY); //TWWS reset by   strobe command.
+ 837   1      }
+ 838          
+ 839          /*********************************************************************
+ 840          ** WOR_enable_by_carrier
+ 841          *********************************************************************/
+ 842          void WOR_enable_by_carrier(void)
+ 843          {
+ 844   1         RCOSC_Cal();      //internal RC OSC CAL
+ 845   1         //RTC_Enable();      //use external RC OSC
+ 846   1            
+ 847   1         //A9112_WriteReg(CKO_REG, 0x08); //CKO=RCK
+ 848   1         //A9112_WriteReg(GPIO1_REG,   (A9112Config[GPIO1_REG - CONFIG] & 0xC0) | 0x09);  //GPIO1=CD
+ 849   1         //A9112_WriteReg(GPIO1_REG,   (A9112Config[GPIO1_REG - CONFIG] & 0xC0) | 0x11);  //GPIO1=TWWS
+ 850   1         //A9112_WriteReg(GPIO2_REG,   (A9112Config[GPIO2_REG - CONFIG] & 0xC0) | 0x01);  //GPIO2=WTR
+ 851   1      
+ 852   1         //setup  WOR   Sleep time and Rx time
+ 853   1         //WOR Active Period  = (WOR_AC[8:0]+1) x  (1/32768), (30.5us ~ 15.6ms).
+ 854   1         //WOR Sleep  Period  = (WOR_SL[9:0]+1) x  (32/4096), (7.8ms ~  7.99s).
+ 855   1         A9112_WriteReg(RCOSC1_REG, 0x7F);   //WOR_SL[9:0]=127 :  WOR   Sleep  Period ~   1s 
+ 856   1         A9112_WriteReg(RCOSC2_REG, 0x00);
+ 857   1         A9112_WriteReg(TCODE_REG, 0x80); //WOR_AC[8:0]=256 :  WOR   Active Period ~   7.84ms
+C51 COMPILER V9.56.0.0   MAIN                                                              03/07/2018 17:45:35 PAGE 15  
+
+ 858   1      
+ 859   1         //WOR_HOLD : WOR hold RX setting when preamble/sync/carrier detected ok.
+ 860   1         //       [0]: No  hold. [1]: Hold   RX.
+ 861   1         //WOR_SEL: TWWS=1 setting. 
+ 862   1         //       [0]:RX valid packet.  [1]: preamble/sync/carrier  detected ok.
+ 863   1         //WOR_RST: Shall be  set   to [1].
+ 864   1         A9112_WriteReg(WOR_REG, 0x3C);   //by carrier, WOR_HOLD=1, WOR_SEL=1, WOR_RST=1
+ 865   1         
+ 866   1         A9112_WriteReg(CDET1_REG, 0x00); //RSSI carrier detect
+ 867   1         A9112_WriteReg(ADCC_REG, 0xC5);     //CDM=1, ADC average=16 times
+ 868   1         A9112_WriteReg(RSSI_REG, 0x91);     //RTH=145 (-100dBm)
+ 869   1      
+ 870   1         StrobeCMD(CMD_STBY);
+ 871   1      
+ 872   1         ERFINT=ENABLE; //enable RF interrupt   
+ 873   1         A9112_WriteReg(INTSW_REG, Enable_RFINT_TWWS);   //enable TWWS INT 
+ 874   1      
+ 875   1         A9112_WriteReg(MODEC2_REG, A9112Config[MODEC2_REG -   CONFIG]  | 0x48); //enable WOR function & ARSSI=1
+ 876   1      
+ 877   1         A9112_PM(PM1);
+ 878   1         //A9112_PM(PM2);
+ 879   1         
+ 880   1         //WOR_SEL=1 : preamble/sync/carrier detected ok -> TWWS  go high  -> wake  up MCU
+ 881   1         //defined process by user
+ 882   1         //...
+ 883   1         //...
+ 884   1         //StrobeCMD(CMD_STBY);  //TWWS reset by   strobe command.
+ 885   1      }
+ 886          
+ 887          /*********************************************************************
+ 888          ** WOT_enable
+ 889          *********************************************************************/
+ 890          void WOT_enable(void)
+ 891          {
+ 892   1         RCOSC_Cal();      //internal RC OSC CAL
+ 893   1         //RTC_Enable();      //use external RC OSC
+ 894   1      
+ 895   1         //A9112_WriteReg(CKO_REG, 0x00); //CKO=DCK
+ 896   1         //A9112_WriteReg(GPIO1_REG,   (A9112Config[GPIO1_REG - CONFIG] & 0xC0) | 0x05);  //GPIO1=FSYNC
+ 897   1         //A9112_WriteReg(GPIO1_REG,   (A9112Config[GPIO1_REG - CONFIG] & 0xC0) | 0x11);  //GPIO1=TWWS
+ 898   1         //A9112_WriteReg(GPIO2_REG,   (A9112Config[GPIO2_REG - CONFIG] & 0xC0) | 0x01);  //GPIO2=WTR
+ 899   1      
+ 900   1         //setup  WOT   Sleep time
+ 901   1         //WOT Sleep  Period  = (WOR_SL[9:0]+1) x  (32/4096), (7.8ms ~  7.99s).
+ 902   1         A9112_WriteReg(RCOSC1_REG, 0x7F);   //WOR_SL[9:0]=127 :  WOT   Sleep  Period ~   1s 
+ 903   1         A9112_WriteReg(RCOSC2_REG, 0x00);
+ 904   1      
+ 905   1         //WOR_RST: Shall be  set   to [1].
+ 906   1         A9112_WriteReg(WOR_REG, 0x21);   //WMODE=1, WOR_RST=1
+ 907   1         
+ 908   1         StrobeCMD(CMD_STBY);
+ 909   1         A9112_WriteFIFO();
+ 910   1      
+ 911   1         ERFINT=ENABLE; //enable RF interrupt   
+ 912   1         A9112_WriteReg(INTSW_REG, Enable_RFINT_TWWS);   //enable TWWS INT 
+ 913   1      
+ 914   1         A9112_WriteReg(MODEC2_REG, A9112Config[MODEC2_REG -   CONFIG]  | 0x08); //enable WOT function
+ 915   1      
+ 916   1         A9112_PM(PM1);
+ 917   1         //A9112_PM(PM2);
+ 918   1         
+ 919   1         //Transmit completed -> TWWS go  high ->  wake up  MCU
+C51 COMPILER V9.56.0.0   MAIN                                                              03/07/2018 17:45:35 PAGE 16  
+
+ 920   1         //defined process by user
+ 921   1         //...
+ 922   1         //...
+ 923   1         //A9112_WriteReg(MODEC2_REG, A9112Config[MODEC2_REG   - CONFIG]);       //disable WOT function
+ 924   1         //StrobeCMD(CMD_STBY);  //TWWS reset by   strobe command.
+ 925   1      }
+ 926          
+ 927          /*********************************************************************
+ 928          ** TWOR_enable
+ 929          *********************************************************************/
+ 930          void TWOR_enable(void)
+ 931          {
+ 932   1         RCOSC_Cal();      //internal RC OSC CAL
+ 933   1         //RTC_Enable();      //use external RC OSC
+ 934   1      
+ 935   1         //A9112_WriteReg(GPIO1_REG,   (A9112Config[GPIO1_REG - CONFIG] & 0xC0) | 0x11);  //GPIO1=TWWS
+ 936   1         //A9112_WriteReg(GPIO2_REG,   (A9112Config[GPIO2_REG - CONFIG] & 0xC0) | 0x11);  //GPIO2=TWWS
+ 937   1      
+ 938   1         //WOR_AC Period   = (WOR_AC[8:0]+1) x  (1/4096), (244us ~ 125ms).
+ 939   1         //WOR_SL Period   = (WOR_SL[9:0]+1) x  (32/4096), (7.8ms ~  7.99s).
+ 940   1         //Note : TWOR function which enables this device to   output a periodic square wave from GPIO   to a MCU
+ 941   1         //                   _____    _____    _____
+ 942   1         //    TWWS signal : _____|  |_____|  |_____|  |
+ 943   1         //                1s   1s  1s   1s  1s   1s 
+ 944   1         //
+ 945   1         //    TWWS interrupt are activated by  a rising edge.  
+ 946   1         //    first time, interrupt interval=1s
+ 947   1         //    other times, interrupt interval=2s
+ 948   1         
+ 949   1         A9112_WriteReg(RCOSC1_REG, 0x7F);   //WOR_SL[9:0]=127 :  WOR_SL Period ~   1s 
+ 950   1         A9112_WriteReg(RCOSC2_REG, 0x19);
+ 951   1         A9112_WriteReg(TCODE_REG, 0xC0); //WOR_AC[8:0]=409 :  WOR_AC Period ~   0.1s
+ 952   1      
+ 953   1         ERFINT=ENABLE; //enable RF interrupt   
+ 954   1         A9112_WriteReg(INTSW_REG, Enable_RFINT_TWWS);   //enable TWWS INT
+ 955   1      
+ 956   1         //A9112_WriteReg(RCOSC3_REG, A9112Config[RCOSC3_REG   - CONFIG] | 0x05);   //enable TWOR function by WOR_AC
+ 957   1         A9112_WriteReg(RCOSC3_REG, A9112Config[RCOSC3_REG -   CONFIG]  | 0x07); //enable TWOR function by WOR_SL
+ 958   1      
+ 959   1         A9112_PM(PM1);
+ 960   1         //A9112_PM(PM2);
+ 961   1         
+ 962   1         //TWWS go high -> wake up MCU
+ 963   1         //defined process by user
+ 964   1         //...
+ 965   1         //...
+ 966   1         //A9112_WriteReg(RCOSC3_REG, A9112Config[RCOSC3_REG   - CONFIG] | 0x04);   //disable TWOR function
+ 967   1      }
+ 968          
+ 969          /*********************************************************************
+ 970          ** TMR_enable
+ 971          *********************************************************************/
+ 972          void TMR_enable(void)
+ 973          {
+ 974   1         RCOSC_Cal();      //internal RC OSC CAL
+ 975   1         //RTC_Enable();      //use external RC OSC
+ 976   1      
+ 977   1         //TMR Period = (1 /  (2 ^ (7-TMRCKS[2:0]) ) ) * (TMRINV + 1)
+ 978   1         //ex : TMRCKS=7, TMRINV=0
+ 979   1         //    TMR Period =   (1 / (2  ^ (7-7)  ) )   * (0+1)  = 1/1 =  1s
+ 980   1      
+ 981   1         A9112_WriteReg(TMRINV_REG, 0x00);   //TMRINV=0
+C51 COMPILER V9.56.0.0   MAIN                                                              03/07/2018 17:45:35 PAGE 17  
+
+ 982   1       
+ 983   1         //A9112_WriteReg(TMRCTL_REG, 0xE1); //TMRCKS=128Hz
+ 984   1         //A9112_WriteReg(TMRCTL_REG, 0xE3); //TMRCKS=64Hz
+ 985   1         //A9112_WriteReg(TMRCTL_REG, 0xE5); //TMRCKS=32Hz
+ 986   1         //A9112_WriteReg(TMRCTL_REG, 0xE7); //TMRCKS=16Hz
+ 987   1         //A9112_WriteReg(TMRCTL_REG, 0xE9); //TMRCKS=8Hz
+ 988   1         //A9112_WriteReg(TMRCTL_REG, 0xEB); //TMRCKS=4Hz
+ 989   1         //A9112_WriteReg(TMRCTL_REG, 0xED); //TMRCKS=2Hz
+ 990   1         A9112_WriteReg(TMRCTL_REG, 0xEF);   //TMRCKS=1Hz
+ 991   1         
+ 992   1         ERFINT=ENABLE; //enable RF interrupt
+ 993   1         A9112_WriteReg(INTSW_REG, Enable_RFINT_TMR); //enable TMR INT
+ 994   1      
+ 995   1         A9112_PM(PM1);
+ 996   1         //A9112_PM(PM2);
+ 997   1         //A9112_PM(PM3);
+ 998   1         
+ 999   1         //defined process by user
+1000   1         //...
+1001   1         //...
+1002   1      }
+1003          
+1004          /*********************************************************************
+1005          ** SAR_ADC_12B
+1006          *********************************************************************/
+1007          void SAR_ADC_12B(void)
+1008          {
+1009   1         Uint16 MVADC_value;
+1010   1         //Uint8  tmp;
+1011   1         
+1012   1         //ADC Input Setting
+1013   1         IOSEL =  (IOSEL & 0x3F) |0x20;   //enable ADCIOS
+1014   1         
+1015   1         //ADC input=P3.2
+1016   1         IOSEL &= 0x3F;
+1017   1         P3OE  &= ~0x04;
+1018   1         P3PUN |= 0x04;
+1019   1         
+1020   1         ///ADC input=P3.3
+1021   1         //IOSEL  = (IOSEL & 0x3F) | 0x40;
+1022   1         //P3OE &= ~0x08;
+1023   1         //P3PUN  |= 0x08;
+1024   1         
+1025   1         ///ADC input=P3.4
+1026   1         //IOSEL  = (IOSEL & 0x3F) | 0x80;
+1027   1         //P3OE &= ~0x10;
+1028   1         //P3PUN  |= 0x10;
+1029   1         
+1030   1         ///ADC input=P3.5
+1031   1         //IOSEL  = (IOSEL & 0x3F) | 0xC0;
+1032   1         //P3OE &= ~0x20;
+1033   1         //P3PUN  |= 0x20;
+1034   1      
+1035   1         A9112_WriteReg(ADCC_REG, A9112Config[ADCC_REG - CONFIG]  | 0x02); //set XADSR
+1036   1         
+1037   1         ERFINT=ENABLE; //enable RF interrupt
+1038   1         A9112_WriteReg(INTSW_REG, Enable_RFINT_12BADC); //enable ADCE INT
+1039   1         
+1040   1         while(1)
+1041   1         {
+1042   2            A9112_WriteReg(ADCCTL_REG, A9112Config[ADCCTL_REG -   CONFIG]  | 0x01); //Start  ADC   conversion, single mode
+1043   2            //do{
+C51 COMPILER V9.56.0.0   MAIN                                                              03/07/2018 17:45:35 PAGE 18  
+
+1044   2            // tmp   = A9112_ReadReg(ADCCTL_REG);  //wait ADC conversion complete
+1045   2            //}while(tmp & 0x01);
+1046   2            
+1047   2            RF_FLAG=1;
+1048   2            while(RF_FLAG);      //wait ADC conversion complete
+1049   2      
+1050   2            //read MVADC
+1051   2            MVADC_value = (A9112_ReadReg(ADCAVG1_REG) &  0xF0);
+1052   2            MVADC_value <<=   4;
+1053   2            MVADC_value = MVADC_value +   A9112_ReadReg(ADCAVG2_REG);
+1054   2         }
+1055   1      }
+1056          
+1057          /*********************************************************************
+1058          ** RSSI_measurement
+1059          *********************************************************************/
+1060          void RSSI_measurement(void)
+1061          {
+1062   1         Uint8 tmp;
+1063   1      
+1064   1         StrobeCMD(CMD_STBY);
+1065   1         
+1066   1         //A9112_WriteReg(GPIO1_REG,   (A9112Config[GPIO1_REG - CONFIG] & 0xC0) | 0x05);  //GPIO1=FSYNC
+1067   1         //A9112_WriteReg(GPIO2_REG,   (A9112Config[GPIO2_REG - CONFIG] & 0xC0) | 0x01);  //GPIO2=WTR
+1068   1      
+1069   1         A9112_WriteReg(ADCC_REG, 0xC5);     //CDM=1, ADC average=16 times 
+1070   1         A9112_WriteReg(MODEC2_REG, A9112Config[MODEC2_REG -   CONFIG]  | 0x40); //ARSSI=1
+1071   1      
+1072   1         ERFINT=ENABLE; //enable RF interrupt
+1073   1         A9112_WriteReg(INTSW_REG, Enable_RFINT_FSTNC);    //enable FSYNC interrupt
+1074   1         
+1075   1         StrobeCMD(CMD_RX);
+1076   1         
+1077   1         RF_FLAG=1;
+1078   1         while(RF_FLAG)    //Stay in RX mode until receiving ID code(sync ok)    
+1079   1         {
+1080   2            tmp   = A9112_ReadReg(RSSI_REG); //read RSSI value(environment RSSI)
+1081   2         }
+1082   1         tmp   = A9112_ReadReg(RSSI_REG);    //read RSSI value(wanted signal  RSSI)
+1083   1      }
+1084          
+1085          /*********************************************************************
+1086          ** RC_ADC0_24B
+1087          *********************************************************************/
+1088          void RC_ADC0_24B(void)
+1089          {
+1090   1         //Note : Only A9109
+1091   1         //RC ADC0 Circuit
+1092   1         //IC Pin2 IN0 :   Oscillator input pin.
+1093   1         //IC Pin3 CS0 :   Reference capacitor  connection pin.
+1094   1         //IC Pin4 RS0 :   Reference resistor connection pin.
+1095   1         //IC Pin5 RT0 :   Resistor sensor   connection pin for measurement.
+1096   1      
+1097   1         Uint32 ADC_value;
+1098   1      
+1099   1         RCOSC_Cal();      //internal RC OSC CAL
+1100   1         //RTC_Enable();      //use external RC OSC
+1101   1      
+1102   1         ADCCH =  ADCCH &  ~0x01;   //Select RC ADC0
+1103   1         
+1104   1         ResetCMD(RCADC_RST);    //Reset  24B   RC ADC
+1105   1      
+C51 COMPILER V9.56.0.0   MAIN                                                              03/07/2018 17:45:35 PAGE 19  
+
+1106   1         //AB MODE
+1107   1         A9112_WriteReg(RADMOD0_REG,   (A9112Config[RADMOD0_REG - CONFIG] | 0x04)); //RC ADC blase clock=32.768K
+1108   1         A9112_WriteReg(RADWTC0_REG,   0xFF);   //WTC=255
+1109   1         A9112_WriteReg(RADCA0_2_REG, 0xFF); //RA=0xFFE000  
+1110   1         A9112_WriteReg(RADCA0_1_REG, 0xE0);
+1111   1         A9112_WriteReg(RADCA0_0_REG, 0x00);
+1112   1         A9112_WriteReg(RADCB0_2_REG, 0x00); //RB=0x000000
+1113   1         A9112_WriteReg(RADCB0_1_REG, 0x00);
+1114   1         A9112_WriteReg(RADCB0_0_REG, 0x00);
+1115   1         
+1116   1         A9112_WriteReg(RADCON0_REG,   A9112Config[RADCON0_REG - CONFIG] | 0x89);      //Start  RC ADC operation & enable
+             - RC ADC interrupt
+1117   1      
+1118   1         ERFINT=1;         //enable RF interrupt
+1119   1      
+1120   1         A9112_PM(PM1);
+1121   1        //A9112_PM(PM2);
+1122   1      
+1123   1         //RC ADC, AB mode, conversion time ~0.5sec
+1124   1         //defined process by user
+1125   1         //...
+1126   1         //...
+1127   1      
+1128   1         //read ADC value
+1129   1         ADC_value = A9112_ReadReg(RADCA0_2_REG);
+1130   1         ADC_value = (ADC_value<<8) + A9112_ReadReg(RADCA0_1_REG);
+1131   1         ADC_value = (ADC_value<<8) + A9112_ReadReg(RADCA0_0_REG);
+1132   1      }
+1133          
+1134          /*********************************************************************
+1135          ** RC_ADC1_24B
+1136          *********************************************************************/
+1137          void RC_ADC1_24B(void)
+1138          {
+1139   1         //Note : Only A9109
+1140   1         //RC ADC1 Circuit
+1141   1         //IC Pin26 P1.0/IN1  : Oscillator input pin.
+1142   1         //IC Pin27 P1.1/CS1  : Reference capacitor connection pin.
+1143   1         //IC Pin28 P1.2/RS1  : Reference resistor connection  pin.
+1144   1         //IC Pin29 P1.3/RT1  : Resistor sensor connection pin for measurement.
+1145   1      
+1146   1         Uint32 ADC_value;
+1147   1      
+1148   1         RCOSC_Cal();      //internal RC OSC CAL
+1149   1         //RTC_Enable();      //use external RC OSC
+1150   1      
+1151   1         ADCCH = ADCCH  | 0x01;  //Select RC ADC1
+1152   1         P1OE  = P1OE & 0xF0;    //P1.0~P1.3 as input, pull-high
+1153   1         P1PUN = P1PUN  & 0xF0;     //P1.0~P1.3 as input, pull-high
+1154   1         
+1155   1         ResetCMD(RCADC_RST);    //Reset  24B   RC ADC
+1156   1      
+1157   1         //AB MODE
+1158   1         A9112_WriteReg(RADMOD1_REG,   (A9112Config[RADMOD1_REG - CONFIG] | 0x04)); //RC ADC blase clock=32.768K
+1159   1         A9112_WriteReg(RADWTC1_REG,   0xFF);   //WTC=255
+1160   1         A9112_WriteReg(RADCA1_2_REG, 0xFF); //RA=0xFFE000  
+1161   1         A9112_WriteReg(RADCA1_1_REG, 0xE0);
+1162   1         A9112_WriteReg(RADCA1_0_REG, 0x00);
+1163   1         A9112_WriteReg(RADCB1_2_REG, 0x00); //RB=0x000000
+1164   1         A9112_WriteReg(RADCB1_1_REG, 0x00);
+1165   1         A9112_WriteReg(RADCB1_0_REG, 0x00);
+1166   1         
+C51 COMPILER V9.56.0.0   MAIN                                                              03/07/2018 17:45:35 PAGE 20  
+
+1167   1         A9112_WriteReg(RADCON1_REG,   A9112Config[RADCON1_REG - CONFIG] | 0x89);      //Start  RC ADC operation & enable
+             - RC ADC interrupt
+1168   1      
+1169   1         ERFINT=1;         //enable RF interrupt
+1170   1      
+1171   1         A9112_PM(PM1);
+1172   1        //A9112_PM(PM2);
+1173   1      
+1174   1         //RC ADC, AB mode, conversion time ~0.5sec
+1175   1         //defined process by user
+1176   1         //...
+1177   1         //...
+1178   1      
+1179   1         //read ADC value
+1180   1         ADC_value = A9112_ReadReg(RADCA1_2_REG);
+1181   1         ADC_value = (ADC_value<<8) + A9112_ReadReg(RADCA1_1_REG);
+1182   1         ADC_value = (ADC_value<<8) + A9112_ReadReg(RADCA1_0_REG);
+1183   1      }
+1184          /************************************************************************
+1185          ** UserRegister
+1186          ************************************************************************/
+1187          void UserRegister(void)
+1188          {  
+1189   1      
+1190   1            #ifdef RF_DR10Kbps_50KIFBW 
+              
+                    A9112_WriteReg(MODEC2_REG           ,0x02       );
+                    A9112_WriteReg(CACL_REG             ,0x00       );
+                    A9112_WriteReg(FIFO1_REG            ,0x3F       );
+                    A9112_WriteReg(FIFO2_REG            ,0x00       );
+              
+                    A9112_WriteReg(CKO_REG              ,0x00       );
+                    A9112_WriteReg(GPIO1_REG            ,0x05       );
+                    A9112_WriteReg(GPIO2_REG            ,0x01       );
+              
+                    
+                    A9112_WriteReg(TMRINV_REG           ,0x00       );
+                    A9112_WriteReg(TMRCTL_REG           ,0x00       );
+              
+                    #endif
+1206   1         
+1207   1      
+1208   1            #ifdef RF_DR100Kbps_100KIFBW
+1209   1      
+1210   1               A9112_WriteReg(MODEC2_REG           ,0x02 );
+1211   1               A9112_WriteReg(CACL_REG             ,0x00 );
+1212   1               A9112_WriteReg(FIFO1_REG            ,0x3F );
+1213   1               A9112_WriteReg(FIFO2_REG            ,0x00 );
+1214   1               
+1215   1               A9112_WriteReg(CKO_REG              ,0x00 );
+1216   1               A9112_WriteReg(GPIO1_REG            ,0x05 );
+1217   1               A9112_WriteReg(GPIO2_REG            ,0x01 );
+1218   1      
+1219   1               
+1220   1               A9112_WriteReg(TMRINV_REG           ,0x00 );
+1221   1               A9112_WriteReg(TMRCTL_REG           ,0x00 );
+1222   1               
+1223   1      
+1224   1            #endif
+1225   1                  
+1226   1            #ifdef RF_DR150Kbps_150KIFBW
+              
+C51 COMPILER V9.56.0.0   MAIN                                                              03/07/2018 17:45:35 PAGE 21  
+
+                       A9112_WriteReg(MODEC2_REG           ,0x02 );
+                       A9112_WriteReg(CACL_REG             ,0x00 );
+                       A9112_WriteReg(FIFO1_REG            ,0x3F );
+                       A9112_WriteReg(FIFO2_REG            ,0x00 );
+                       
+                       A9112_WriteReg(CKO_REG              ,0x00 );
+                       A9112_WriteReg(GPIO1_REG            ,0x05 );
+                       A9112_WriteReg(GPIO2_REG            ,0x81 );
+              
+                       
+                       
+                       A9112_WriteReg(TMRINV_REG           ,0x00 );
+                       A9112_WriteReg(TMRCTL_REG           ,0x00 );
+                       
+              
+                    #endif
+1244   1         
+1245   1            #ifdef RF_DR250Kbps_250KIFBW
+              
+                       A9112_WriteReg(MODEC2_REG           ,0x02);
+                       A9112_WriteReg(CACL_REG             ,0x00);
+                       A9112_WriteReg(FIFO1_REG            ,0x3F);
+                       A9112_WriteReg(FIFO2_REG            ,0x00);
+                       
+                       A9112_WriteReg(CKO_REG              ,0x00);
+                       A9112_WriteReg(GPIO1_REG            ,0x45);
+                       A9112_WriteReg(GPIO2_REG            ,0x41);
+              
+                       
+                       A9112_WriteReg(TMRINV_REG           ,0x00);
+                       A9112_WriteReg(TMRCTL_REG           ,0x00);
+                       
+              
+                    #endif
+1262   1         
+1263   1      
+1264   1      
+1265   1      }
+1266          
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =   4197    ----
+   CONSTANT SIZE    =     80    ----
+   XDATA SIZE       =    558    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =      3    ----
+   IDATA SIZE       =     10    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  3 WARNING(S),  0 ERROR(S)

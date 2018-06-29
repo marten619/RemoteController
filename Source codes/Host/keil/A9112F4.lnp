@@ -1,0 +1,11 @@
+".\STARTUP_AMC1.obj",
+".\main.obj",
+".\MasterI2C.obj",
+".\SHA_I2C.obj",
+".\Uti.obj",
+".\MCU.obj",
+".\A9112F4_Function.obj",
+"..\RF\LIB\A9112F4_FunctionLIB.LIB"(A9112F4_FUNCTIONLIB) 
+TO "A9112F4" 
+RAMSIZE(256) 
+DW(16) 

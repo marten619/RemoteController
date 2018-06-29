@@ -1,0 +1,39 @@
+Field=Comment~String~Comment~100|Field=Description~String~Description~100|Field=Designator~String~Designator~100|Field=Footprint~String~Footprint~100|Field=LibRef~String~LibRef~100|Field=Quantity~Integer~Quantity~100|ReportField=Currency~<none>|ReportField=ProductionQuantity~1|ReportField=ProjectFileName~Free Documents|ReportField=ProjectFullPath~Free Documents|ReportField=Title~Bill of Materials For PCB Document [Pmaster-A9112-HOST_1.PcbDoc]|ReportField=TotalQuantity~74|ReportField=ReportTime~下午 06:13:43|ReportField=ReportDate~2017/11/21|ReportField=ReportDateTime~2017/11/21 下午 06:13:43|ReportField=OutputName~Bill of Materials|ReportField=OutputType~BOM_PartType|ReportField=GeneratorName~ReportComponents|ReportField=GeneratorDescription~Component Reports|ReportField=VariantName~None|ReportField=DataSourceFileName~Pmaster-A9112-HOST_1.PcbDoc|ReportField=DataSourceFullPath~D:\Pmaster\Projects\Remote Control\HW design\Pmaster-A9112-HOST_1.PcbDoc
+BUZZER/TMB12A03||B1|BUZEER|BUZZER|1
+Battery|Multicell Battery|BT1|BAT-2|Battery|1
+10uF||C1|A0402|CAP|1
+2.2uF|Chip C|C2, C5, C9, C17, C22, C23, C35, C36|A0402|C/0603, CAP|8
+100pF||C3|A0402|CAP|1
+22pF|Chip C|C4, C7|A0402|C/0402|2
+1uF||C6, C21|A0402|CAP|2
+8.2pF|Chip C|C8, C19|A0402|C/0603, CAP|2
+1nF||C10, C12|A0402|CAP|2
+NC|Chip C|C11, C24, C25, R15|A0402|C/0603, RES1|4
+2.7pF||C13|A0402|CAP|1
+27pF||C14|A0402|CAP|1
+22nF|Chip C|C15|A0402|C/1206|1
+0.1uF|Chip C|C16, C30, C31, C32, C33, C38|A0402|C/0603, CAP|6
+470pF||C18|A0402|CAP|1
+15pF|Chip C|C20|A0402|C/0603|1
+?流二极管/1N4148|Default Diode|D1|0805|Diode|1
+Comment||J2, J3, J4, J5, J6, J7, J8|HDR2_2.54||7
+Comment||J9|HDR4_2.54||1
+39nH|Chip L|L1|A0402|L/0402|1
+33nH|Chip L|L2|A0402|L/0402|1
+22nH||L3, L4|A0402|L/0603|2
+0|Chip  R|L5, R1, R3, R4, R5, R14|A0402|L/0603, R/0603, RES1|6
+GREEN||LED1|A0603||1
+RED||LED2|A0603||1
+8050_NPN|NPN Bipolar Transistor|Q1|SOT23_N|NPN|1
+100K|Chip R|R2|A0402|R/0402|1
+50||R6|A0402|L/0603|1
+4.7k||R10, R11|A0402|RES1|2
+330||R12, R17|A0402|RES1|2
+1k||R16|A0402|RES1|1
+SW-PB||S1/P3.5, S2/P3.4, S3/P3.3, S4/P3.2|SW-SMD|SW-PB|4
+A9112F4||U1|QFN40_5*5|A9112F4|1
+Comment||U2|DFN-MC8||1
+LP3995-33B3F|GMT 3.3V REGULTOR|U3|SOT-23_N|REG\G903\3.3V\SOT-223|1
+EEPROM_24AA16||U4|MSOP-MS8_N|EEPROM_24AA16|1
+12.8MHz/CL=20pF||Y1|XTAL_3.2*2.5||1
+32.768KHz|Crystal|Y2|XTAL_3215|CRYSTAL|1

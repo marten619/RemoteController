@@ -1,0 +1,690 @@
+/*********************************************************************
+**	Device:		A9112-F4
+**	File:		main.c
+**	Target:		A9112-F4
+**	Tools:		ICE
+**	Updated:	2016-07-21
+**	Description:
+**	This file is a sample code for your	reference.
+**
+**	Copyright (C) 2016 AMICCOM Corp.
+**
+*********************************************************************/
+#define	_MAIN_
+
+#include "..\include\System_config.h"
+
+/*********************************************************************
+* main loop
+*********************************************************************/
+void main(void)
+{
+		PCON &=	~0x10;	//PWE=0
+  
+		InitMCU();
+	
+		InitTimer0();
+	
+		InitUART0_Timer1();
+		TR0=ENABLE;	//Timer0 on
+		EA=ENABLE;	//enable interrupt
+	
+	
+	if(P3_5)	//P3_5=1, master
+		Flag_MASTER	= TRUE;
+	else		  //P3_5=0,	slave
+		Flag_MASTER	= FALSE;
+
+	if(Flag_MASTER)
+	{
+		InitRF();	//init RF
+		ERFINT=ENABLE;	//enable RF	interrupt
+		A9112_WriteReg(INTSW_REG, Enable_RFINT_WTR);	//enable WTR interrupt
+		Seq	= 0;
+
+		while(1)
+		{
+			FreqSet(HopTab[Seq]);
+
+			A9112_WriteFIFO();	//write	data to	tx fifo
+			
+			StrobeCMD(CMD_TX);
+			RF_FLAG=1;
+			while(RF_FLAG);		//wait transmit	completed
+			Delay100us(2);		//delay	200us for TX ramp down
+		   
+			StrobeCMD(CMD_RX);
+			timer=0;
+			TimeoutFlag=0;
+			RF_FLAG=1;
+			while((RF_FLAG==1) && (TimeoutFlag==0));	//wait receive completed or	timeout
+			if(TimeoutFlag)
+			{
+				StrobeCMD(CMD_STBY);
+
+				Seq	= (Seq+1)% 3;
+				
+				continue;
+			}
+
+			RxPacket();
+
+			Seq	= (Seq+1)% 3;
+
+			Delay10ms(10);
+		}
+	}
+	else
+	{
+		InitRF();	//init RF
+		ERFINT=ENABLE;	//enable RF	interrupt
+		A9112_WriteReg(INTSW_REG, Enable_RFINT_WTR);	//enable WTR interrupt
+
+		Seq	= 0;
+		RxCnt =	0;
+		Err_ByteCnt	= 0;
+		Err_BitCnt = 0;
+		
+		while(1)
+		{
+			FreqSet(HopTab[Seq]);
+
+			StrobeCMD(CMD_RX);
+			RF_FLAG=1;
+			while(RF_FLAG);		//wait receive completed
+			RxPacket();
+			A9112_WriteFIFO();	//write	data to	tx fifo
+			StrobeCMD(CMD_TX);
+			RF_FLAG=1;
+			while(RF_FLAG);		//wait transmit	completed
+			Delay100us(2);		//delay	200us for TX ramp down
+
+			Seq	= (Seq+1)% 3;
+
+			Delay10ms(9);
+		}
+	}
+}
+
+
+
+
+/************************************************************************
+**	A9112_WriteFIFO
+************************************************************************/
+void A9112_WriteFIFO(void)
+{
+	Uint16 i;
+	
+	ResetCMD(TXPOINT_RST);	//TX FIFO address pointer reset
+	for(i=0; i<64; i++)
+	{
+		A9112_WriteReg((i +	TX_FIFO), PN9_Tab[i]);
+	}
+}
+
+/************************************************************************
+**	RxPacket
+************************************************************************/
+void RxPacket(void)
+{
+	Uint16 i;
+	Uint8 recv;
+	Uint8 tmp;
+
+	RxCnt++;
+
+	ResetCMD(RXPOINT_RST);	//RX FIFO address pointer reset
+	
+	for(i=0; i<64; i++)
+	{
+		tmpbuf[i] =	A9112_ReadReg(i	+ RX_FIFO);
+	}
+
+	for(i=0; i<64; i++)
+	{
+		recv = tmpbuf[i];
+		tmp	= recv ^ PN9_Tab[i];
+		if(tmp!=0)
+		{
+			Err_ByteCnt++;
+			Err_BitCnt += (BitCount_Tab[tmp>>4]	+ BitCount_Tab[tmp & 0x0F]);
+		}
+	}
+}
+
+/************************************************************************
+**	RTC_Enable
+************************************************************************/
+void RTC_Enable(void)
+{
+	IOSEL		|= 0x10;	//enable RTCIOS
+	P3OE		&= 0x3F;
+	P3PUN		&= 0x3F;
+
+	//A9112_WriteReg(CKO_REG, 0x50);	//ROSC
+
+	A9112_WriteReg(RCOSC3_REG, A9112Config[RCOSC3_REG -	CONFIG]	| 0x04);	//TMRE=1
+	A9112_WriteReg(RTC_REG,	0x01);	//RTCE=1
+	A9112_WriteReg(RCOSC4_REG, A9112Config[RCOSC4_REG -	CONFIG]	| 0x80);	//RCOT[2]=1
+	
+	//delay	for	RTC	stabilized
+	//...
+	//...
+}
+
+/*********************************************************************
+** WOR_enable_by_preamble
+*********************************************************************/
+void WOR_enable_by_preamble(void)
+{
+	RCOSC_Cal();		//internal RC OSC CAL
+	//RTC_Enable();		//use external RC OSC
+		
+	//A9112_WriteReg(CKO_REG, 0x08);	//CKO=RCK
+	//A9112_WriteReg(GPIO1_REG,	(A9112Config[GPIO1_REG - CONFIG] & 0xC0) | 0x0D);	//GPIO1=PMDO
+	//A9112_WriteReg(GPIO1_REG,	(A9112Config[GPIO1_REG - CONFIG] & 0xC0) | 0x11);	//GPIO1=TWWS
+	//A9112_WriteReg(GPIO2_REG,	(A9112Config[GPIO2_REG - CONFIG] & 0xC0) | 0x01);	//GPIO2=WTR
+
+	//setup	WOR	Sleep time and Rx time
+	//WOR Active Period	= (WOR_AC[8:0]+1) x	(1/32768), (30.5us ~ 15.6ms).
+	//WOR Sleep	 Period	= (WOR_SL[9:0]+1) x	(32/4096), (7.8ms ~	7.99s).
+	A9112_WriteReg(RCOSC1_REG, 0x7F);	//WOR_SL[9:0]=127 :	WOR	Sleep  Period ~	1s 
+	A9112_WriteReg(RCOSC2_REG, 0x00);
+	A9112_WriteReg(TCODE_REG, 0x80);	//WOR_AC[8:0]=256 :	WOR	Active Period ~	7.84ms
+
+	//WOR_HOLD : WOR hold RX setting when preamble/sync/carrier	detected ok.
+	//			[0]: No	hold. [1]: Hold	RX.
+	//WOR_SEL: TWWS=1 setting. 
+	//			[0]:RX valid packet.  [1]: preamble/sync/carrier  detected ok.
+	//WOR_RST: Shall be	set	to [1].
+	A9112_WriteReg(WOR_REG,	0x3A);	//by preamble, WOR_HOLD=1, WOR_SEL=1, WOR_RST=1
+
+	StrobeCMD(CMD_STBY);
+
+	ERFINT=ENABLE;	//enable RF	interrupt	
+	A9112_WriteReg(INTSW_REG, Enable_RFINT_TWWS);	//enable TWWS INT	
+
+	A9112_WriteReg(MODEC2_REG, A9112Config[MODEC2_REG -	CONFIG]	| 0x08);	//enable WOR function
+
+	A9112_PM(PM1);
+	//A9112_PM(PM2);
+	
+	//WOR_SEL=1	: preamble/sync/carrier	detected ok	-> TWWS	go high	-> wake	up MCU
+	//defined process by user
+	//...
+	//...
+	//StrobeCMD(CMD_STBY);	//TWWS reset by	strobe command.
+}
+
+/*********************************************************************
+** WOR_enable_by_sync
+*********************************************************************/
+void WOR_enable_by_sync(void)
+{
+	RCOSC_Cal();		//internal RC OSC CAL
+	//RTC_Enable();		//use external RC OSC
+		
+	//A9112_WriteReg(CKO_REG, 0x08);	//CKO=RCK
+	//A9112_WriteReg(GPIO1_REG,	(A9112Config[GPIO1_REG - CONFIG] & 0xC0) | 0x05);	//GPIO1=FSYNC
+	//A9112_WriteReg(GPIO1_REG,	(A9112Config[GPIO1_REG - CONFIG] & 0xC0) | 0x11);	//GPIO1=TWWS
+	//A9112_WriteReg(GPIO2_REG,	(A9112Config[GPIO2_REG - CONFIG] & 0xC0) | 0x01);	//GPIO2=WTR
+
+	//setup	WOR	Sleep time and Rx time
+	//WOR Active Period	= (WOR_AC[8:0]+1) x	(1/32768), (30.5us ~ 15.6ms).
+	//WOR Sleep	 Period	= (WOR_SL[9:0]+1) x	(32/4096), (7.8ms ~	7.99s).
+	A9112_WriteReg(RCOSC1_REG, 0x7F);	//WOR_SL[9:0]=127 :	WOR	Sleep  Period ~	1s	
+	A9112_WriteReg(RCOSC2_REG, 0x00);
+	A9112_WriteReg(TCODE_REG, 0x80);	//WOR_AC[8:0]=256 :	WOR	Active Period ~	7.84ms
+
+	//WOR_HOLD : WOR hold RX setting when preamble/sync/carrier	detected ok.
+	//			[0]: No	hold. [1]: Hold	RX.
+	//WOR_SEL: TWWS=1 setting. 
+	//			[0]:RX valid packet.  [1]: preamble/sync/carrier  detected ok.
+	//WOR_RST: Shall be	set	to [1].
+	A9112_WriteReg(WOR_REG,	0x28);	//by sync, WOR_HOLD=1, WOR_SEL=0, WOR_RST=1
+
+	StrobeCMD(CMD_STBY);
+
+	ERFINT=ENABLE;	 //enable RF interrupt	 
+	A9112_WriteReg(INTSW_REG, Enable_RFINT_TWWS);	//enable TWWS INT	
+
+	A9112_WriteReg(MODEC2_REG, A9112Config[MODEC2_REG -	CONFIG]	| 0x08);	//enable WOR function
+
+	A9112_PM(PM1);
+	//A9112_PM(PM2);
+
+	//WOR_SEL=0	: RX valid packet -> TWWS go high -> wake up MCU
+	//check	data
+	RxPacket();
+	StrobeCMD(CMD_STBY);	//TWWS reset by	strobe command.
+}
+
+/*********************************************************************
+** WOR_enable_by_carrier
+*********************************************************************/
+void WOR_enable_by_carrier(void)
+{
+	RCOSC_Cal();		//internal RC OSC CAL
+	//RTC_Enable();		//use external RC OSC
+		
+	//A9112_WriteReg(CKO_REG, 0x08);	//CKO=RCK
+	//A9112_WriteReg(GPIO1_REG,	(A9112Config[GPIO1_REG - CONFIG] & 0xC0) | 0x09);	//GPIO1=CD
+	//A9112_WriteReg(GPIO1_REG,	(A9112Config[GPIO1_REG - CONFIG] & 0xC0) | 0x11);	//GPIO1=TWWS
+	//A9112_WriteReg(GPIO2_REG,	(A9112Config[GPIO2_REG - CONFIG] & 0xC0) | 0x01);	//GPIO2=WTR
+
+	//setup	WOR	Sleep time and Rx time
+	//WOR Active Period	= (WOR_AC[8:0]+1) x	(1/32768), (30.5us ~ 15.6ms).
+	//WOR Sleep	 Period	= (WOR_SL[9:0]+1) x	(32/4096), (7.8ms ~	7.99s).
+	A9112_WriteReg(RCOSC1_REG, 0x7F);	//WOR_SL[9:0]=127 :	WOR	Sleep  Period ~	1s	
+	A9112_WriteReg(RCOSC2_REG, 0x00);
+	A9112_WriteReg(TCODE_REG, 0x80);	//WOR_AC[8:0]=256 :	WOR	Active Period ~	7.84ms
+
+	//WOR_HOLD : WOR hold RX setting when preamble/sync/carrier	detected ok.
+	//			[0]: No	hold. [1]: Hold	RX.
+	//WOR_SEL: TWWS=1 setting. 
+	//			[0]:RX valid packet.  [1]: preamble/sync/carrier  detected ok.
+	//WOR_RST: Shall be	set	to [1].
+	A9112_WriteReg(WOR_REG,	0x3C);	//by carrier, WOR_HOLD=1, WOR_SEL=1, WOR_RST=1
+	
+	A9112_WriteReg(CDET1_REG, 0x00);	//RSSI carrier detect
+	A9112_WriteReg(ADCC_REG, 0xC5);		//CDM=1, ADC average=16	times
+	A9112_WriteReg(RSSI_REG, 0x91);		//RTH=145 (-100dBm)
+
+	StrobeCMD(CMD_STBY);
+
+	ERFINT=ENABLE;	//enable RF	interrupt	
+	A9112_WriteReg(INTSW_REG, Enable_RFINT_TWWS);	//enable TWWS INT	
+
+	A9112_WriteReg(MODEC2_REG, A9112Config[MODEC2_REG -	CONFIG]	| 0x48);	//enable WOR function &	ARSSI=1
+
+	A9112_PM(PM1);
+	//A9112_PM(PM2);
+	
+	//WOR_SEL=1	: preamble/sync/carrier	detected ok	-> TWWS	go high	-> wake	up MCU
+	//defined process by user
+	//...
+	//...
+	//StrobeCMD(CMD_STBY);	//TWWS reset by	strobe command.
+}
+
+/*********************************************************************
+** WOT_enable
+*********************************************************************/
+void WOT_enable(void)
+{
+	RCOSC_Cal();		//internal RC OSC CAL
+	//RTC_Enable();		//use external RC OSC
+
+	//A9112_WriteReg(CKO_REG, 0x00);	//CKO=DCK
+	//A9112_WriteReg(GPIO1_REG,	(A9112Config[GPIO1_REG - CONFIG] & 0xC0) | 0x05);	//GPIO1=FSYNC
+	//A9112_WriteReg(GPIO1_REG,	(A9112Config[GPIO1_REG - CONFIG] & 0xC0) | 0x11);	//GPIO1=TWWS
+	//A9112_WriteReg(GPIO2_REG,	(A9112Config[GPIO2_REG - CONFIG] & 0xC0) | 0x01);	//GPIO2=WTR
+
+	//setup	WOT	Sleep time
+	//WOT Sleep	 Period	= (WOR_SL[9:0]+1) x	(32/4096), (7.8ms ~	7.99s).
+	A9112_WriteReg(RCOSC1_REG, 0x7F);	//WOR_SL[9:0]=127 :	WOT	Sleep  Period ~	1s 
+	A9112_WriteReg(RCOSC2_REG, 0x00);
+
+	//WOR_RST: Shall be	set	to [1].
+	A9112_WriteReg(WOR_REG,	0x21);	//WMODE=1, WOR_RST=1
+	
+	StrobeCMD(CMD_STBY);
+	A9112_WriteFIFO();
+
+	ERFINT=ENABLE;	//enable RF	interrupt	
+	A9112_WriteReg(INTSW_REG, Enable_RFINT_TWWS);	//enable TWWS INT	
+
+	A9112_WriteReg(MODEC2_REG, A9112Config[MODEC2_REG -	CONFIG]	| 0x08);	//enable WOT function
+
+	A9112_PM(PM1);
+	//A9112_PM(PM2);
+	
+	//Transmit completed ->	TWWS go	high ->	wake up	MCU
+	//defined process by user
+	//...
+	//...
+	//A9112_WriteReg(MODEC2_REG, A9112Config[MODEC2_REG	- CONFIG]);			//disable WOT function
+	//StrobeCMD(CMD_STBY);	//TWWS reset by	strobe command.
+}
+
+/*********************************************************************
+** TWOR_enable
+*********************************************************************/
+void TWOR_enable(void)
+{
+	RCOSC_Cal();		//internal RC OSC CAL
+	//RTC_Enable();		//use external RC OSC
+
+	//A9112_WriteReg(GPIO1_REG,	(A9112Config[GPIO1_REG - CONFIG] & 0xC0) | 0x11);	//GPIO1=TWWS
+	//A9112_WriteReg(GPIO2_REG,	(A9112Config[GPIO2_REG - CONFIG] & 0xC0) | 0x11);	//GPIO2=TWWS
+
+	//WOR_AC Period	= (WOR_AC[8:0]+1) x	(1/4096), (244us ~ 125ms).
+	//WOR_SL Period	= (WOR_SL[9:0]+1) x	(32/4096), (7.8ms ~	7.99s).
+	//Note : TWOR function which enables this device to	output a periodic square wave from GPIO	to a MCU
+	//							_____		_____		_____
+	//		TWWS signal	: _____|	 |_____|	 |_____|	 |
+	//						1s	  1s	1s	  1s	1s	  1s 
+	//
+	//		TWWS interrupt are activated by	a rising edge.	 
+	//		first time,	interrupt interval=1s
+	//		other times, interrupt interval=2s
+	
+	A9112_WriteReg(RCOSC1_REG, 0x7F);	//WOR_SL[9:0]=127 :	WOR_SL Period ~	1s	
+	A9112_WriteReg(RCOSC2_REG, 0x19);
+	A9112_WriteReg(TCODE_REG, 0xC0);	//WOR_AC[8:0]=409 :	WOR_AC Period ~	0.1s
+
+	ERFINT=ENABLE;	//enable RF	interrupt	
+	A9112_WriteReg(INTSW_REG, Enable_RFINT_TWWS);	//enable TWWS INT
+
+	//A9112_WriteReg(RCOSC3_REG, A9112Config[RCOSC3_REG	- CONFIG] |	0x05);	//enable TWOR function by WOR_AC
+	A9112_WriteReg(RCOSC3_REG, A9112Config[RCOSC3_REG -	CONFIG]	| 0x07);	//enable TWOR function by WOR_SL
+
+	A9112_PM(PM1);
+	//A9112_PM(PM2);
+	
+	//TWWS go high -> wake up MCU
+	//defined process by user
+	//...
+	//...
+	//A9112_WriteReg(RCOSC3_REG, A9112Config[RCOSC3_REG	- CONFIG] |	0x04);	//disable TWOR function
+}
+
+/*********************************************************************
+** TMR_enable
+*********************************************************************/
+void TMR_enable(void)
+{
+	RCOSC_Cal();		//internal RC OSC CAL
+	//RTC_Enable();		//use external RC OSC
+
+	//TMR Period = (1 /	(2 ^ (7-TMRCKS[2:0]) ) ) * (TMRINV + 1)
+	//ex : TMRCKS=7, TMRINV=0
+	//	   TMR Period =	(1 / (2	^ (7-7)	) )	* (0+1)	= 1/1 =	1s
+
+	A9112_WriteReg(TMRINV_REG, 0x00);	//TMRINV=0
+ 
+	//A9112_WriteReg(TMRCTL_REG, 0xE1);	//TMRCKS=128Hz
+	//A9112_WriteReg(TMRCTL_REG, 0xE3);	//TMRCKS=64Hz
+	//A9112_WriteReg(TMRCTL_REG, 0xE5);	//TMRCKS=32Hz
+	//A9112_WriteReg(TMRCTL_REG, 0xE7);	//TMRCKS=16Hz
+	//A9112_WriteReg(TMRCTL_REG, 0xE9);	//TMRCKS=8Hz
+	//A9112_WriteReg(TMRCTL_REG, 0xEB);	//TMRCKS=4Hz
+	//A9112_WriteReg(TMRCTL_REG, 0xED);	//TMRCKS=2Hz
+	A9112_WriteReg(TMRCTL_REG, 0xEF);	//TMRCKS=1Hz
+	
+	ERFINT=ENABLE;	//enable RF	interrupt
+	A9112_WriteReg(INTSW_REG, Enable_RFINT_TMR);	//enable TMR INT
+
+	A9112_PM(PM1);
+	//A9112_PM(PM2);
+	//A9112_PM(PM3);
+	
+	//defined process by user
+	//...
+	//...
+}
+
+/*********************************************************************
+** SAR_ADC_12B
+*********************************************************************/
+void SAR_ADC_12B(void)
+{
+	Uint16 MVADC_value;
+	//Uint8	tmp;
+	
+	//ADC Input	Setting
+	IOSEL =	(IOSEL & 0x3F)	|0x20;	//enable ADCIOS
+	
+	//ADC input=P3.2
+	IOSEL	&= 0x3F;
+	P3OE	&= ~0x04;
+	P3PUN	|= 0x04;
+	
+	///ADC input=P3.3
+	//IOSEL	= (IOSEL & 0x3F) | 0x40;
+	//P3OE &= ~0x08;
+	//P3PUN	|= 0x08;
+	
+	///ADC input=P3.4
+	//IOSEL	= (IOSEL & 0x3F) | 0x80;
+	//P3OE &= ~0x10;
+	//P3PUN	|= 0x10;
+	
+	///ADC input=P3.5
+	//IOSEL	= (IOSEL & 0x3F) | 0xC0;
+	//P3OE &= ~0x20;
+	//P3PUN	|= 0x20;
+
+	A9112_WriteReg(ADCC_REG, A9112Config[ADCC_REG -	CONFIG]	| 0x02);	//set XADSR
+	
+	ERFINT=ENABLE;	//enable RF	interrupt
+	A9112_WriteReg(INTSW_REG, Enable_RFINT_12BADC);	//enable ADCE INT
+	
+	while(1)
+	{
+		A9112_WriteReg(ADCCTL_REG, A9112Config[ADCCTL_REG -	CONFIG]	| 0x01);	//Start	ADC	conversion,	single mode
+		//do{
+		//	tmp	= A9112_ReadReg(ADCCTL_REG);	//wait ADC conversion complete
+		//}while(tmp & 0x01);
+		
+		RF_FLAG=1;
+		while(RF_FLAG);		//wait ADC conversion complete
+
+		//read MVADC
+		MVADC_value	= (A9112_ReadReg(ADCAVG1_REG) &	0xF0);
+		MVADC_value	<<=	4;
+		MVADC_value	= MVADC_value +	A9112_ReadReg(ADCAVG2_REG);
+	}
+}
+
+/*********************************************************************
+** RSSI_measurement
+*********************************************************************/
+void RSSI_measurement(void)
+{
+	Uint8 tmp;
+
+	StrobeCMD(CMD_STBY);
+	
+	//A9112_WriteReg(GPIO1_REG,	(A9112Config[GPIO1_REG - CONFIG] & 0xC0) | 0x05);	//GPIO1=FSYNC
+	//A9112_WriteReg(GPIO2_REG,	(A9112Config[GPIO2_REG - CONFIG] & 0xC0) | 0x01);	//GPIO2=WTR
+
+	A9112_WriteReg(ADCC_REG, 0xC5);		//CDM=1, ADC average=16	times	
+	A9112_WriteReg(MODEC2_REG, A9112Config[MODEC2_REG -	CONFIG]	| 0x40);	//ARSSI=1
+
+	ERFINT=ENABLE;	//enable RF	interrupt
+	A9112_WriteReg(INTSW_REG, Enable_RFINT_FSTNC);	  //enable FSYNC interrupt
+	
+	StrobeCMD(CMD_RX);
+	
+	RF_FLAG=1;
+	while(RF_FLAG)		//Stay in RX mode until	receiving ID code(sync ok)		
+	{
+		tmp	= A9112_ReadReg(RSSI_REG);	//read RSSI	value(environment RSSI)
+	}
+	tmp	= A9112_ReadReg(RSSI_REG);		//read RSSI	value(wanted signal	RSSI)
+}
+
+/*********************************************************************
+** RC_ADC0_24B
+*********************************************************************/
+void RC_ADC0_24B(void)
+{
+	//Note : Only A9109
+	//RC ADC0 Circuit
+	//IC Pin2 IN0 :	Oscillator input pin.
+	//IC Pin3 CS0 :	Reference capacitor	connection pin.
+	//IC Pin4 RS0 :	Reference resistor connection pin.
+	//IC Pin5 RT0 :	Resistor sensor	connection pin for measurement.
+
+	Uint32 ADC_value;
+
+	RCOSC_Cal();		//internal RC OSC CAL
+	//RTC_Enable();		//use external RC OSC
+
+	ADCCH =	ADCCH &	~0x01;	//Select RC	ADC0
+	
+	ResetCMD(RCADC_RST);		//Reset	24B	RC ADC
+
+	//AB MODE
+	A9112_WriteReg(RADMOD0_REG,	(A9112Config[RADMOD0_REG - CONFIG] | 0x04));	//RC ADC blase clock=32.768K
+	A9112_WriteReg(RADWTC0_REG,	0xFF);	//WTC=255
+	A9112_WriteReg(RADCA0_2_REG, 0xFF);	//RA=0xFFE000	
+	A9112_WriteReg(RADCA0_1_REG, 0xE0);
+	A9112_WriteReg(RADCA0_0_REG, 0x00);
+	A9112_WriteReg(RADCB0_2_REG, 0x00);	//RB=0x000000
+	A9112_WriteReg(RADCB0_1_REG, 0x00);
+	A9112_WriteReg(RADCB0_0_REG, 0x00);
+	
+	A9112_WriteReg(RADCON0_REG,	A9112Config[RADCON0_REG	- CONFIG] |	0x89);		//Start	RC ADC operation & enable RC ADC interrupt
+
+	ERFINT=1;			//enable RF	interrupt
+
+	A9112_PM(PM1);
+  //A9112_PM(PM2);
+
+	//RC ADC, AB mode, conversion time ~0.5sec
+	//defined process by user
+	//...
+	//...
+
+	//read ADC value
+	ADC_value =	A9112_ReadReg(RADCA0_2_REG);
+	ADC_value =	(ADC_value<<8) + A9112_ReadReg(RADCA0_1_REG);
+	ADC_value =	(ADC_value<<8) + A9112_ReadReg(RADCA0_0_REG);
+}
+
+/*********************************************************************
+** RC_ADC1_24B
+*********************************************************************/
+void RC_ADC1_24B(void)
+{
+	//Note : Only A9109
+	//RC ADC1 Circuit
+	//IC Pin26 P1.0/IN1	: Oscillator input pin.
+	//IC Pin27 P1.1/CS1	: Reference	capacitor connection pin.
+	//IC Pin28 P1.2/RS1	: Reference	resistor connection	pin.
+	//IC Pin29 P1.3/RT1	: Resistor sensor connection pin for measurement.
+
+	Uint32 ADC_value;
+
+	RCOSC_Cal();		//internal RC OSC CAL
+	//RTC_Enable();		//use external RC OSC
+
+	ADCCH	= ADCCH	| 0x01;	//Select RC	ADC1
+	P1OE	= P1OE & 0xF0;		//P1.0~P1.3	as input, pull-high
+	P1PUN	= P1PUN	& 0xF0;		//P1.0~P1.3	as input, pull-high
+	
+	ResetCMD(RCADC_RST);		//Reset	24B	RC ADC
+
+	//AB MODE
+	A9112_WriteReg(RADMOD1_REG,	(A9112Config[RADMOD1_REG - CONFIG] | 0x04));	//RC ADC blase clock=32.768K
+	A9112_WriteReg(RADWTC1_REG,	0xFF);	//WTC=255
+	A9112_WriteReg(RADCA1_2_REG, 0xFF);	//RA=0xFFE000	
+	A9112_WriteReg(RADCA1_1_REG, 0xE0);
+	A9112_WriteReg(RADCA1_0_REG, 0x00);
+	A9112_WriteReg(RADCB1_2_REG, 0x00);	//RB=0x000000
+	A9112_WriteReg(RADCB1_1_REG, 0x00);
+	A9112_WriteReg(RADCB1_0_REG, 0x00);
+	
+	A9112_WriteReg(RADCON1_REG,	A9112Config[RADCON1_REG	- CONFIG] |	0x89);		//Start	RC ADC operation & enable RC ADC interrupt
+
+	ERFINT=1;			//enable RF	interrupt
+
+	A9112_PM(PM1);
+  //A9112_PM(PM2);
+
+	//RC ADC, AB mode, conversion time ~0.5sec
+	//defined process by user
+	//...
+	//...
+
+	//read ADC value
+	ADC_value =	A9112_ReadReg(RADCA1_2_REG);
+	ADC_value =	(ADC_value<<8) + A9112_ReadReg(RADCA1_1_REG);
+	ADC_value =	(ADC_value<<8) + A9112_ReadReg(RADCA1_0_REG);
+}
+/************************************************************************
+** UserRegister
+************************************************************************/
+void UserRegister(void)
+{	
+
+		#ifdef RF_DR10Kbps_50KIFBW 
+
+		A9112_WriteReg(MODEC2_REG   			,0x02			);
+		A9112_WriteReg(CACL_REG     			,0x00			);
+		A9112_WriteReg(FIFO1_REG    			,0x3F			);
+		A9112_WriteReg(FIFO2_REG    			,0x00			);
+
+		A9112_WriteReg(CKO_REG      			,0x00			);
+		A9112_WriteReg(GPIO1_REG    			,0x05			);
+		A9112_WriteReg(GPIO2_REG    			,0x01			);
+
+		
+		A9112_WriteReg(TMRINV_REG   			,0x00			);
+		A9112_WriteReg(TMRCTL_REG   			,0x00			);
+
+		#endif
+	
+
+		#ifdef RF_DR100Kbps_100KIFBW
+
+			A9112_WriteReg(MODEC2_REG   			,0x02	);
+			A9112_WriteReg(CACL_REG     			,0x00	);
+			A9112_WriteReg(FIFO1_REG    			,0x3F	);
+			A9112_WriteReg(FIFO2_REG    			,0x00	);
+			
+			A9112_WriteReg(CKO_REG      			,0x00	);
+			A9112_WriteReg(GPIO1_REG    			,0x05	);
+			A9112_WriteReg(GPIO2_REG    			,0x01	);
+
+			
+			A9112_WriteReg(TMRINV_REG   			,0x00	);
+			A9112_WriteReg(TMRCTL_REG   			,0x00	);
+			
+
+		#endif
+				
+		#ifdef RF_DR150Kbps_150KIFBW
+
+			A9112_WriteReg(MODEC2_REG   			,0x02	);
+			A9112_WriteReg(CACL_REG     			,0x00	);
+			A9112_WriteReg(FIFO1_REG    			,0x3F	);
+			A9112_WriteReg(FIFO2_REG    			,0x00	);
+			
+			A9112_WriteReg(CKO_REG      			,0x00	);
+			A9112_WriteReg(GPIO1_REG    			,0x05	);
+			A9112_WriteReg(GPIO2_REG    			,0x81	);
+
+			
+			
+			A9112_WriteReg(TMRINV_REG   			,0x00	);
+			A9112_WriteReg(TMRCTL_REG   			,0x00	);
+			
+
+		#endif
+	
+		#ifdef RF_DR250Kbps_250KIFBW
+
+			A9112_WriteReg(MODEC2_REG   			,0x02);
+			A9112_WriteReg(CACL_REG     			,0x00);
+			A9112_WriteReg(FIFO1_REG    			,0x3F);
+			A9112_WriteReg(FIFO2_REG    			,0x00);
+			
+			A9112_WriteReg(CKO_REG      			,0x00);
+			A9112_WriteReg(GPIO1_REG    			,0x45);
+			A9112_WriteReg(GPIO2_REG    			,0x41);
+
+			
+			A9112_WriteReg(TMRINV_REG   			,0x00);
+			A9112_WriteReg(TMRCTL_REG   			,0x00);
+			
+
+		#endif
+	
+
+
+}
+
